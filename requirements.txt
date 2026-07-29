@@ -1,0 +1,8 @@
+streamlit==1.31.1
+pandas
+folium==0.15.1
+streamlit-folium==0.17.3
+requests==2.31.0
+openpyxl==3.1.2
+python-dotenv==1.0.1
+numpy
