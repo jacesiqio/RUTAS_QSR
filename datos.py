@@ -1,112 +1,104 @@
-import sqlite3
-import os
 import pandas as pd
-from datetime import datetime
+import gspread
+import streamlit as st
 
-# 📌 DETECCIÓN Y HOMOLOGACIÓN AUTOMÁTICA DE BASE DE DATOS
-DB_DIR = "data"
-DB_NAME = "rutas_qsr.db"
+# ==========================================
+# 1. CONEXIÓN A LA NUBE (GOOGLE SHEETS)
+# ==========================================
+@st.cache_resource
+def conectar_bd():
+    """Establece conexión con Google Sheets usando el archivo JSON de credenciales del robot."""
+    try:
+        # Busca el archivo de credenciales de Google Cloud en tu carpeta
+        gc = gspread.service_account(filename='credenciales.json')
+        # Conectamos con el archivo exacto en tu nube
+        sh = gc.open('RutasQSR_Cloud')
+        hoja = sh.sheet1  # Trabajamos sobre la primera pestaña
+        return hoja
+    except Exception as e:
+        st.error(f"❌ Error crítico de conexión a la nube: {e}")
+        st.info("💡 Verifica que el archivo 'credenciales.json' esté en la carpeta del proyecto y que le hayas dado acceso de Editor a tu hoja de cálculo.")
+        st.stop()
 
-if os.path.exists(os.path.join(DB_DIR, DB_NAME)):
-    DB_PATH = os.path.join(DB_DIR, DB_NAME)
-elif os.path.exists(DB_NAME):
-    DB_PATH = DB_NAME
-else:
-    os.makedirs(DB_DIR, exist_ok=True)
-    DB_PATH = os.path.join(DB_DIR, DB_NAME)
-
-
-def inicializar_base_datos():
-    """Crea las tablas necesarias en rutas_qsr.db si no existen. (Sin perfiles FSM)"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+# ==========================================
+# 2. LECTURA DE DATOS (READ)
+# ==========================================
+def cargar_inventario_maestro():
+    """Descarga toda la base de datos de la nube y la convierte en un DataFrame."""
+    hoja = conectar_bd()
+    datos = hoja.get_all_records()
     
-    # Tabla principal de sucursales QSR
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS sucursales (
-            id_sucursal TEXT PRIMARY KEY,
-            sucursal_nombre TEXT,
-            cliente_marca TEXT,
-            latitud REAL,
-            longitud REAL,
-            estado TEXT,
-            zona_localidad TEXT,
-            direccion_completa TEXT,
-            estatus_visita TEXT DEFAULT 'PENDIENTE',
-            fecha_ultima_visita TEXT,
-            tipo_visita TEXT DEFAULT 'STANDARD'
-        )
-    """)
-    
-    conn.commit()
-    conn.close()
-
-
-def importar_maestro_sucursales(uploaded_file, filename):
-    """Importa o actualiza registros masivos desde Excel o CSV."""
-    inicializar_base_datos()
-    
-    if filename.lower().endswith('.csv'):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = pd.read_excel(uploaded_file)
+    if not datos:
+        # Si la hoja está vacía, devolvemos el cascarón con las 10 columnas oficiales
+        columnas = [
+            "id_sucursal", "cliente_marca", "sucursal_nombre", "estado", 
+            "zona_localidad", "latitud", "longitud", "direccion_completa", 
+            "visitas_realizadas", "estatus_visita"
+        ]
+        return pd.DataFrame(columns=columnas)
         
-    df.columns = df.columns.str.strip().str.lower()
-    
-    conn = sqlite3.connect(DB_PATH)
-    df.to_sql("temp_importacion", conn, if_exists="replace", index=False)
-    
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO sucursales (
-            id_sucursal, sucursal_nombre, cliente_marca, latitud, longitud,
-            estado, zona_localidad, direccion_completa, estatus_visita, fecha_ultima_visita, tipo_visita
-        )
-        SELECT 
-            id_sucursal, sucursal_nombre, cliente_marca, latitud, longitud,
-            estado, zona_localidad, direccion_completa,
-            COALESCE(estatus_visita, 'PENDIENTE'),
-            fecha_ultima_visita,
-            COALESCE(tipo_visita, 'STANDARD')
-        FROM temp_importacion
-    """)
-    
-    total = cursor.rowcount
-    conn.commit()
-    conn.close()
-    
-    return total
+    return pd.DataFrame(datos)
 
-
-def actualizar_estatus_sucursales(ids_list, nuevo_estatus):
-    """Actualiza el estatus de las visitas seleccionadas."""
-    if not ids_list:
-        return
+def obtener_sucursales_pendientes():
+    """Filtra y devuelve solo las sucursales PENDIENTES, ordenadas para dar prioridad a las más rezagadas."""
+    df = cargar_inventario_maestro()
+    if df.empty:
+        return df
+    
+    # Extraemos solo las pendientes
+    pendientes = df[df['estatus_visita'] != 'COMPLETADA'].copy()
+    
+    # APLICAMOS LA REGLA DE ORO: Ordenamos de menor a mayor cantidad de visitas realizadas
+    if not pendientes.empty and 'visitas_realizadas' in pendientes.columns:
+        # Convertimos a número por seguridad y rellenamos vacíos con 0
+        pendientes['visitas_realizadas'] = pd.to_numeric(pendientes['visitas_realizadas'], errors='coerce').fillna(0)
+        pendientes = pendientes.sort_values(by='visitas_realizadas', ascending=True)
         
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    placeholders = ','.join(['?'] * len(ids_list))
-    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    cursor.execute(f"""
-        UPDATE sucursales 
-        SET estatus_visita = ?, fecha_ultima_visita = ?
-        WHERE id_sucursal IN ({placeholders})
-    """, [nuevo_estatus, fecha_actual] + list(ids_list))
-    
-    conn.commit()
-    conn.close()
+    return pendientes
 
+# ==========================================
+# 3. ESCRITURA Y ACTUALIZACIÓN (WRITE / UPDATE)
+# ==========================================
+def inyectar_nuevas_sucursales(df_nuevas):
+    """Sube nuevas sucursales a Google Sheets desde el Agente Cartógrafo (Enriquecedor)."""
+    hoja = conectar_bd()
+    # Convertimos el DataFrame a una lista pura para subirla en bloque
+    valores_a_subir = df_nuevas.values.tolist()
+    # Hacemos un "Append" para inyectarlas debajo de la última fila ocupada
+    hoja.append_rows(valores_a_subir)
+    return True
 
-def reiniciar_estatus_visitas(estado=None):
-    """Reinicia todas las visitas o las de un estado a 'PENDIENTE'."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+def actualizar_estatus_sucursal(id_sucursal, nuevo_estatus):
+    """
+    Busca la sucursal por ID y actualiza su estatus en tiempo real en la nube.
+    Si el estatus es COMPLETADA, aplica la matemática acumulativa (+1 visita).
+    """
+    hoja = conectar_bd()
+    # Extraemos toda la Columna A (ID de Sucursales) para encontrar en qué fila está
+    columna_ids = hoja.col_values(1)
     
-    if estado and estado != "TODOS LOS ESTADOS":
-        cursor.execute("UPDATE sucursales SET estatus_visita = 'PENDIENTE' WHERE estado = ?", (estado,))
-    else:
-        cursor.execute("UPDATE sucursales SET estatus_visita = 'PENDIENTE'")
+    try:
+        # Sumamos +1 porque las filas en Sheets empiezan en 1 (y los índices de Python en 0)
+        fila_excel = columna_ids.index(str(id_sucursal)) + 1
         
-    conn.commit()
-    conn.close()
+        # 1. Actualizamos el Estatus (Columna J -> Columna número 10)
+        hoja.update_cell(fila_excel, 10, nuevo_estatus)
+        
+        # 2. Si es una visita completada, sumamos al histórico
+        if nuevo_estatus == 'COMPLETADA':
+            # Leemos el valor actual (Columna I -> Columna número 9)
+            visitas_actuales = hoja.cell(fila_excel, 9).value
+            
+            # Si está vacío le ponemos 0, si no, lo convertimos a entero
+            try:
+                visitas_numero = int(visitas_actuales) if visitas_actuales else 0
+            except ValueError:
+                visitas_numero = 0
+                
+            nuevas_visitas = visitas_numero + 1
+            hoja.update_cell(fila_excel, 9, nuevas_visitas)
+            
+        return True
+    except ValueError:
+        # El ID no se encontró en la columna A
+        return False
