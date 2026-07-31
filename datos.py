@@ -3,21 +3,24 @@ import gspread
 import streamlit as st
 
 # ==========================================
-# 1. CONEXIÓN A LA NUBE (GOOGLE SHEETS)
+# 1. CONEXIÓN A LA NUBE (GOOGLE SHEETS VIA SECRETS)
 # ==========================================
 @st.cache_resource
 def conectar_bd():
-    """Establece conexión con Google Sheets usando el archivo JSON de credenciales del robot."""
+    """Establece conexión con Google Sheets usando la bóveda de Streamlit Cloud."""
     try:
-        # Busca el archivo de credenciales de Google Cloud en tu carpeta
-        gc = gspread.service_account(filename='credenciales.json')
-        # Conectamos con el archivo exacto en tu nube
+        # Extraemos las credenciales de la bóveda de Streamlit
+        credenciales_dict = dict(st.secrets["gcp_service_account"])
+        
+        # Conectamos a Google usando ese diccionario en lugar de un archivo físico
+        gc = gspread.service_account_from_dict(credenciales_dict)
+        
         sh = gc.open('RutasQSR_Cloud')
         hoja = sh.sheet1  # Trabajamos sobre la primera pestaña
         return hoja
     except Exception as e:
         st.error(f"❌ Error crítico de conexión a la nube: {e}")
-        st.info("💡 Verifica que el archivo 'credenciales.json' esté en la carpeta del proyecto y que le hayas dado acceso de Editor a tu hoja de cálculo.")
+        st.info("💡 Verifica que hayas configurado correctamente los 'Secrets' en Streamlit Cloud.")
         st.stop()
 
 # ==========================================
