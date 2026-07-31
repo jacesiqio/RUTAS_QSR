@@ -6,3 +6,5 @@ streamlit-folium
 gspread
 oauth2client
 plotly
+openai
+fpdf2
