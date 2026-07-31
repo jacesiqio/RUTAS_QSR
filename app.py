@@ -30,7 +30,7 @@ except ImportError:
 st.set_page_config(page_title="RUTAS-QSR Dashboard", layout="wide", initial_sidebar_state="expanded")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# ☁️ NUEVAS HERRAMIENTAS CLOUD
+# ☁️ HERRAMIENTAS CLOUD
 from datos import cargar_inventario_maestro, obtener_sucursales_pendientes, inyectar_nuevas_sucursales, actualizar_estatus_sucursal
 
 try:
@@ -126,22 +126,32 @@ def obtener_ruta_vial_real(puntos_coordenadas):
     return puntos_coordenadas
 
 def crear_mapa_base(puntos_marcadores, ruta_linea=None, color_linea="#002F6C"):
-    if not puntos_marcadores: return folium.Map(location=[19.4326, -99.1332], zoom_start=11)
-    m = folium.Map(location=[puntos_marcadores[0]['lat'], puntos_marcadores[0]['lon']], zoom_start=11)
+    if not puntos_marcadores: 
+        return folium.Map(location=[19.4326, -99.1332], zoom_start=11)
+    
+    m = folium.Map(location=[float(puntos_marcadores[0]['lat']), float(puntos_marcadores[0]['lon'])], zoom_start=11)
     lats, lons = [], []
+    
     for p in puntos_marcadores:
-        lats.append(p['lat']); lons.append(p['lon'])
+        lat_f, lon_f = float(p['lat']), float(p['lon'])
+        lats.append(lat_f); lons.append(lon_f)
         if p['idx'] == 0:
             c, i, txt = "red", "home", f"<b>{p['name']}</b><br>Punto de Partida"
         elif p['idx'] == "Pivote":
             c, i, txt = "purple", "star", f"<b>{p['name']}</b><br>Centro Radial"
         else:
             c, i, txt = "blue", "info-sign", f"<b>{p['name']}</b><br>Orden: {p['idx']}"
-        folium.Marker(location=[p['lat'], p['lon']], popup=txt, icon=folium.Icon(color=c, icon=i)).add_to(m)
+        folium.Marker(location=[lat_f, lon_f], popup=txt, icon=folium.Icon(color=c, icon=i)).add_to(m)
+        
     if ruta_linea and len(ruta_linea) > 1:
-        folium.PolyLine(ruta_linea, color=color_linea, weight=4.5, opacity=0.85).add_to(m)
-        for coord in ruta_linea: lats.append(coord[0]); lons.append(coord[1])
-    if lats and lons: m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+        coords_limpias = [[float(coord[0]), float(coord[1])] for coord in ruta_linea]
+        folium.PolyLine(coords_limpias, color=color_linea, weight=4.5, opacity=0.85).add_to(m)
+        for coord in coords_limpias: 
+            lats.append(coord[0])
+            lons.append(coord[1])
+            
+    if lats and lons: 
+        m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
     return m
 
 st.sidebar.header("☁️ Ecosistema Cloud Activo")
@@ -168,7 +178,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
         estados_disponibles = sorted([str(e) for e in df_full['estado'].dropna().unique() if str(e).strip() != ''])
         st.markdown("### 🏢 Opciones de Ruteo Inteligente")
         
-        # 🚀 TRES PESTAÑAS: VRP GLOBAL, DISEÑADOR RADIAL Y RUTAS PERSONALIZABLES (LIBRES)
         tab_vrp, tab_radial, tab_custom = st.tabs([
             "⚡ Circuitos Automáticos (VRP Global)", 
             "🎯 Diseñador Radial", 
@@ -245,7 +254,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                         for id_s in completadas_sel:
                             actualizar_estatus_sucursal(id_s, "COMPLETADA")
                     st.session_state.diaria_simulada = False; st.rerun()
-                st_folium(crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje)), width=1200, height=450)
+                
+                # MAPA BLINDADO CONTRA MARSHALL EXCEPTION (Línea 248)
+                st_folium(crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje)), width=1200, height=450, returned_objects=[])
 
         with tab_radial:
             col_rv1, col_rv2 = st.columns(2)
@@ -321,7 +332,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     st.rerun()
                 mapa_rad = crear_mapa_base(st.session_state.radial_puntos_mapa, obtener_ruta_vial_real(st.session_state.radial_coords_viaje))
                 folium.Circle(location=[st.session_state.radial_lat_piv, st.session_state.radial_lon_piv], radius=st.session_state.radial_radio * 1000, color='red', weight=2, fill=True, fillOpacity=0.1).add_to(mapa_rad)
-                st_folium(mapa_rad, width=1200, height=450)
+                
+                # MAPA BLINDADO CONTRA MARSHALL EXCEPTION
+                st_folium(mapa_rad, width=1200, height=450, returned_objects=[])
 
         with tab_custom:
             st.markdown("### 🔧 Diseñador de Rutas Personalizables (Libre de Historial)")
@@ -352,7 +365,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             if lista_locs_cust:
                 alcaldia_cust = st.selectbox("Localidad:", ["TODAS"] + lista_locs_cust, key="custom_alc")
                 
-                # OBTENEMOS TODAS LAS SUCURSALES LIBRES (SIN FILTRO DE PENDIENTES)
                 if alcaldia_cust == "TODAS":
                     df_all_sucursales_zona = df_full[df_full['estado'] == zona_general_cust]
                 else:
@@ -415,7 +427,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     
                     mapa_cust = crear_mapa_base(st.session_state.custom_puntos_mapa, obtener_ruta_vial_real(st.session_state.custom_coords_viaje))
                     folium.Circle(location=[lat_piv_c, lon_piv_c], radius=radio_km_cust * 1000, color='purple', weight=2, fill=True, fillOpacity=0.08).add_to(mapa_cust)
-                    st_folium(mapa_cust, width=1200, height=450)
+                    
+                    # MAPA BLINDADO CONTRA MARSHALL EXCEPTION
+                    st_folium(mapa_cust, width=1200, height=450, returned_objects=[])
 
 elif modulo_principal == "📋 Control de Inventario y Visitas":
     st.markdown("### 📋 Módulo Administrativo de Inventario")
