@@ -30,7 +30,8 @@ except ImportError:
 st.set_page_config(page_title="RUTAS-QSR Dashboard", layout="wide", initial_sidebar_state="expanded")
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from datos import DB_PATH, inicializar_base_datos, importar_maestro_sucursales, actualizar_estatus_sucursales, reiniciar_estatus_visitas
+# ☁️ NUEVAS HERRAMIENTAS CLOUD
+from datos import cargar_inventario_maestro, obtener_sucursales_pendientes, inyectar_nuevas_sucursales, actualizar_estatus_sucursal
 
 try:
     from core.simulacion import simular_ruta_del_dia, calcular_distancia_haversine
@@ -43,10 +44,6 @@ except ImportError:
     from motor_logistico import generar_clusters_geograficos, optimizar_secuencia_por_proximidad
 
 # 🛡️ BLINDAJE DE SESIÓN
-if 'bd_inicializada' not in st.session_state:
-    inicializar_base_datos()
-    st.session_state.bd_inicializada = True
-
 if 'diaria_simulada' not in st.session_state:
     st.session_state.diaria_simulada = False
     st.session_state.diaria_visitas_final = []
@@ -118,20 +115,6 @@ def buscar_datos_osm_hibrido(marca, sucursal, localidad, estado):
         except: pass
     return None, None, None, None, None
 
-def inyectar_a_base_maestra_11_campos(df_a_inyectar):
-    conn = sqlite3.connect(DB_PATH)
-    df_a_inyectar.to_sql("temp_homologacion", conn, if_exists="replace", index=False)
-    conn.execute("""
-        INSERT OR REPLACE INTO sucursales (id_sucursal, sucursal_nombre, cliente_marca, latitud, longitud, estado, zona_localidad, direccion_completa, estatus_visita, fecha_ultima_visita, tipo_visita, visitas_realizadas)
-        SELECT t.id_sucursal, t.sucursal_nombre, t.cliente_marca, t.latitud, t.longitud, t.estado, t.zona_localidad, t.direccion_completa,
-            COALESCE((SELECT estatus_visita FROM sucursales WHERE id_sucursal = t.id_sucursal), 'PENDIENTE'),
-            COALESCE((SELECT fecha_ultima_visita FROM sucursales WHERE id_sucursal = t.id_sucursal), NULL), 'STANDARD',
-            COALESCE((SELECT visitas_realizadas FROM sucursales WHERE id_sucursal = t.id_sucursal), 0)
-        FROM temp_homologacion t
-    """)
-    conn.commit()
-    conn.close()
-
 def obtener_ruta_vial_real(puntos_coordenadas):
     if len(puntos_coordenadas) < 2: return puntos_coordenadas
     locs = ";".join([f"{lon},{lat}" for lat, lon in puntos_coordenadas])
@@ -161,13 +144,8 @@ def crear_mapa_base(puntos_marcadores, ruta_linea=None, color_linea="#002F6C"):
     if lats and lons: m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
     return m
 
-st.sidebar.header("📁 Carga Rápida (Matriz 11 Campos)")
-uploaded_file = st.sidebar.file_uploader("Arrastra tu archivo listo (.xlsx, .csv)", type=["xlsx", "csv"])
-if uploaded_file is not None and ('ultimo_archivo_cargado' not in st.session_state or st.session_state.ultimo_archivo_cargado != uploaded_file.name):
-    with st.spinner("Integrando base de datos a la matriz..."):
-        total_filas = importar_maestro_sucursales(uploaded_file, uploaded_file.name)
-        st.session_state.ultimo_archivo_cargado = uploaded_file.name
-        st.sidebar.success(f"¡Carga Exitosa! {total_filas} registros operativos.")
+st.sidebar.header("☁️ Ecosistema Cloud Activo")
+st.sidebar.info("Tu base de datos ahora está sincronizada en tiempo real con Google Sheets.")
 
 modulo_principal = st.radio(
     "Selecciona Módulo de Trabajo:", 
@@ -181,16 +159,13 @@ modulo_principal = st.radio(
 )
 
 if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        df_marcas = pd.read_sql_query("SELECT DISTINCT cliente_marca FROM sucursales WHERE cliente_marca IS NOT NULL ORDER BY cliente_marca", conn)
-        df_estados = pd.read_sql_query("SELECT DISTINCT estado FROM sucursales WHERE estado IS NOT NULL AND estado != '' ORDER BY estado", conn)
-    except: df_estados = pd.DataFrame()
-    conn.close()
-
-    if df_estados.empty: st.warning("⚠️ La base de datos está vacía.")
+    with st.spinner("Descargando mapa logístico desde la nube..."):
+        df_full = cargar_inventario_maestro()
+    
+    if df_full.empty or 'estado' not in df_full.columns:
+        st.warning("⚠️ La base de datos en Google Sheets está vacía o mal estructurada.")
     else:
-        estados_disponibles = df_estados['estado'].tolist()
+        estados_disponibles = sorted([str(e) for e in df_full['estado'].dropna().unique() if str(e).strip() != ''])
         st.markdown("### 🏢 Opciones de Ruteo Inteligente")
         
         # 🚀 TRES PESTAÑAS: VRP GLOBAL, DISEÑADOR RADIAL Y RUTAS PERSONALIZABLES (LIBRES)
@@ -219,15 +194,17 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             
             st.markdown("---")
             zona_general_elegida = st.selectbox("Zona General:", estados_disponibles)
-            conn = sqlite3.connect(DB_PATH)
-            df_loc = pd.read_sql_query("SELECT DISTINCT zona_localidad FROM sucursales WHERE estado = ? AND zona_localidad IS NOT NULL", conn, params=[str(zona_general_elegida)])
-            if not df_loc.empty:
-                alcaldia_elegida = st.selectbox("Alcaldía objetivo:", ["TODAS LAS LOCALIDADES"] + df_loc['zona_localidad'].tolist(), index=0)
+            df_loc_full = df_full[df_full['estado'] == zona_general_elegida]
+            lista_locs = sorted([str(l) for l in df_loc_full['zona_localidad'].dropna().unique() if str(l).strip() != ''])
+            
+            if lista_locs:
+                alcaldia_elegida = st.selectbox("Alcaldía objetivo:", ["TODAS LAS LOCALIDADES"] + lista_locs, index=0)
                 
-                q_pool = "SELECT * FROM sucursales WHERE " + ("estado = ?" if alcaldia_elegida == "TODAS LAS LOCALIDADES" else "zona_localidad = ? AND estado = ?") + " AND (estatus_visita IS NULL OR estatus_visita NOT LIKE 'COMPLETADA%') ORDER BY visitas_realizadas ASC"
-                p_pool = [str(zona_general_elegida)] if alcaldia_elegida == "TODAS LAS LOCALIDADES" else [str(alcaldia_elegida), str(zona_general_elegida)]
-                df_pool_sec = pd.read_sql_query(q_pool, conn, params=p_pool)
-                conn.close()
+                df_pendientes = obtener_sucursales_pendientes()
+                if alcaldia_elegida == "TODAS LAS LOCALIDADES":
+                    df_pool_sec = df_pendientes[df_pendientes['estado'] == zona_general_elegida]
+                else:
+                    df_pool_sec = df_pendientes[(df_pendientes['estado'] == zona_general_elegida) & (df_pendientes['zona_localidad'] == alcaldia_elegida)]
                 
                 if not df_pool_sec.empty:
                     total_rutas = max(1, math.ceil(len(df_pool_sec) / visitas_jornada))
@@ -242,7 +219,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                             st.session_state.diaria_puntos_mapa = [{"lat": lat_c, "lon": lon_c, "name": f"📍 ORIGEN ({nombre_origen_final})", "idx": 0}]
                             tiendas_incluidas = 0
                             for idx, v in enumerate(visitas_calc):
-                                orig = next(item for item in bloque if item['id_sucursal'] == v.get('ID Sucursal', v.get('ID', '')))
+                                orig = next(item for item in bloque if str(item['id_sucursal']) == str(v.get('ID Sucursal', v.get('ID', ''))))
                                 h_llegada, h_salida = v.get("ETA Llegada", ""), v.get("ETA Salida", v.get("Hora Salida", ""))
                                 if h_salida > "19:00":
                                     st.error(f"🛑 Corte Estricto: La ruta se detuvo antes de {orig['sucursal_nombre']}. La salida proyectada ({h_salida}) supera las 19:00 hrs.")
@@ -263,8 +240,11 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.diaria_visitas_final)), unsafe_allow_html=True)
                 ids_en_ruta = [item["ID"] for item in st.session_state.diaria_visitas_final]
                 completadas_sel = st.multiselect("Marcar completadas (Se sumará +1 a su histórico):", options=ids_en_ruta, format_func=lambda x: next(f"[{item['Marca']}] {item['Sucursal']}" for item in st.session_state.diaria_visitas_final if item["ID"] == x))
-                if st.button("💾 Guardar Seleccionadas como COMPLETADAS"):
-                    actualizar_estatus_sucursales(completadas_sel, "COMPLETADAS"); st.session_state.diaria_simulada = False; st.rerun()
+                if st.button("☁️ Guardar Seleccionadas como COMPLETADAS"):
+                    with st.spinner("Subiendo actualizaciones a la nube..."):
+                        for id_s in completadas_sel:
+                            actualizar_estatus_sucursal(id_s, "COMPLETADA")
+                    st.session_state.diaria_simulada = False; st.rerun()
                 st_folium(crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje)), width=1200, height=450)
 
         with tab_radial:
@@ -287,15 +267,17 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             
             st.markdown("---")
             zona_general_rad = st.selectbox("Zona (Estado):", estados_disponibles, key="rad_zona")
-            conn = sqlite3.connect(DB_PATH)
-            df_loc_rad = pd.read_sql_query("SELECT DISTINCT zona_localidad FROM sucursales WHERE estado = ? AND zona_localidad IS NOT NULL", conn, params=[str(zona_general_rad)])
-            if not df_loc_rad.empty:
-                alcaldia_rad = st.selectbox("Localidad:", ["TODAS"] + df_loc_rad['zona_localidad'].tolist(), key="rad_alc")
-                q_pivote = "SELECT * FROM sucursales WHERE " + ("estado = ?" if alcaldia_rad == "TODAS" else "zona_localidad = ? AND estado = ?") + " AND (estatus_visita IS NULL OR estatus_visita NOT LIKE 'COMPLETADA%') ORDER BY visitas_realizadas ASC"
-                p_pivote = [str(zona_general_rad)] if alcaldia_rad == "TODAS" else [str(alcaldia_rad), str(zona_general_rad)]
-                df_pivotes_pool = pd.read_sql_query(q_pivote, conn, params=p_pivote)
-                df_all_pending = pd.read_sql_query("SELECT * FROM sucursales WHERE estatus_visita IS NULL OR estatus_visita NOT LIKE 'COMPLETADA%' ORDER BY visitas_realizadas ASC", conn)
-                conn.close()
+            df_loc_rad_full = df_full[df_full['estado'] == zona_general_rad]
+            lista_locs_rad = sorted([str(l) for l in df_loc_rad_full['zona_localidad'].dropna().unique() if str(l).strip() != ''])
+            
+            if lista_locs_rad:
+                alcaldia_rad = st.selectbox("Localidad:", ["TODAS"] + lista_locs_rad, key="rad_alc")
+                
+                df_all_pending = obtener_sucursales_pendientes()
+                if alcaldia_rad == "TODAS":
+                    df_pivotes_pool = df_all_pending[df_all_pending['estado'] == zona_general_rad]
+                else:
+                    df_pivotes_pool = df_all_pending[(df_all_pending['estado'] == zona_general_rad) & (df_all_pending['zona_localidad'] == alcaldia_rad)]
                 
                 if not df_pivotes_pool.empty:
                     col1, col2 = st.columns([2, 1])
@@ -315,7 +297,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                                 st.session_state.radial_puntos_mapa = [{"lat": lat_c_rad, "lon": lon_c_rad, "name": f"📍 ORIGEN", "idx": 0}, {"lat": lat_pivote, "lon": lat_pivote, "name": f"🌟 PIVOTE: {tienda_pivote_nombre}", "idx": "Pivote"}]
                                 tiend_inc = 0
                                 for idx, v in enumerate(visitas_calc):
-                                    orig = next(item for item in bloque if item['id_sucursal'] == v.get('ID', v.get('ID Sucursal', '')))
+                                    orig = next(item for item in bloque if str(item['id_sucursal']) == str(v.get('ID', v.get('ID Sucursal', ''))))
                                     hl, hs = v.get("ETA Llegada", ""), v.get("ETA Salida", v.get("Hora Salida", ""))
                                     if hs > "19:00": st.error(f"🛑 Corte Estricto antes de {orig['sucursal_nombre']}. Supera las 19:00."); break
                                     if hs > "18:00": st.warning(f"⚠️ Excepción Operativa: {orig['sucursal_nombre']} terminaría a las {hs} hrs.")
@@ -331,17 +313,16 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.radial_visitas_final)), unsafe_allow_html=True)
                 ids_en_ruta = [item["ID"] for item in st.session_state.radial_visitas_final]
                 completadas_sel = st.multiselect("Marcar completadas (+1 visita):", options=ids_en_ruta, format_func=lambda x: next(f"[{item['Marca']}] {item['Sucursal']}" for item in st.session_state.radial_visitas_final if item["ID"] == x))
-                if st.button("💾 Guardar Seleccionadas como COMPLETADAS", key="btn_save_rad"):
-                    actualizar_estatus_sucursales(completadas_sel, "COMPLETADAS")
+                if st.button("☁️ Guardar Seleccionadas como COMPLETADAS", key="btn_save_rad"):
+                    with st.spinner("Sincronizando con Google Sheets..."):
+                        for id_s in completadas_sel:
+                            actualizar_estatus_sucursal(id_s, "COMPLETADA")
                     st.session_state.radial_simulada = False
                     st.rerun()
                 mapa_rad = crear_mapa_base(st.session_state.radial_puntos_mapa, obtener_ruta_vial_real(st.session_state.radial_coords_viaje))
                 folium.Circle(location=[st.session_state.radial_lat_piv, st.session_state.radial_lon_piv], radius=st.session_state.radial_radio * 1000, color='red', weight=2, fill=True, fillOpacity=0.1).add_to(mapa_rad)
                 st_folium(mapa_rad, width=1200, height=450)
 
-        # ========================================================
-        # NUEVA PESTAÑA: 🔧 RUTAS PERSONALIZABLES (LIBRES DE RESTRICCIONES)
-        # ========================================================
         with tab_custom:
             st.markdown("### 🔧 Diseñador de Rutas Personalizables (Libre de Historial)")
             st.info("Este diseñador radial te permite generar rutas sin restricciones: ignora el estatus previo de visitas y te permite agregar, quitar o modificar sucursales libremente.")
@@ -365,16 +346,17 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             
             st.markdown("---")
             zona_general_cust = st.selectbox("Zona (Estado):", estados_disponibles, key="custom_zona")
-            conn = sqlite3.connect(DB_PATH)
-            df_loc_cust = pd.read_sql_query("SELECT DISTINCT zona_localidad FROM sucursales WHERE estado = ? AND zona_localidad IS NOT NULL", conn, params=[str(zona_general_cust)])
-            if not df_loc_cust.empty:
-                alcaldia_cust = st.selectbox("Localidad:", ["TODAS"] + df_loc_cust['zona_localidad'].tolist(), key="custom_alc")
+            df_loc_cust_full = df_full[df_full['estado'] == zona_general_cust]
+            lista_locs_cust = sorted([str(l) for l in df_loc_cust_full['zona_localidad'].dropna().unique() if str(l).strip() != ''])
+            
+            if lista_locs_cust:
+                alcaldia_cust = st.selectbox("Localidad:", ["TODAS"] + lista_locs_cust, key="custom_alc")
                 
                 # OBTENEMOS TODAS LAS SUCURSALES LIBRES (SIN FILTRO DE PENDIENTES)
-                q_custom_all = "SELECT * FROM sucursales WHERE " + ("estado = ?" if alcaldia_cust == "TODAS" else "zona_localidad = ? AND estado = ?") + " ORDER BY sucursal_nombre ASC"
-                p_custom_all = [str(zona_general_cust)] if alcaldia_cust == "TODAS" else [str(alcaldia_cust), str(zona_general_cust)]
-                df_all_sucursales_zona = pd.read_sql_query(q_custom_all, conn, params=p_custom_all)
-                conn.close()
+                if alcaldia_cust == "TODAS":
+                    df_all_sucursales_zona = df_full[df_full['estado'] == zona_general_cust]
+                else:
+                    df_all_sucursales_zona = df_full[(df_full['estado'] == zona_general_cust) & (df_full['zona_localidad'] == alcaldia_cust)]
                 
                 if not df_all_sucursales_zona.empty:
                     col_piv1, col_piv2 = st.columns([2, 1])
@@ -384,10 +366,8 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     pivote_obj = df_all_sucursales_zona[df_all_sucursales_zona['sucursal_nombre'] == pivote_custom_nombre].iloc[0]
                     lat_piv_c, lon_piv_c = float(pivote_obj['latitud']), float(pivote_obj['longitud'])
                     
-                    # Filtramos las que caen dentro del radio radial inicial como sugerencia ideal
                     sugeridas_radio = [row.to_dict() for idx, row in df_all_sucursales_zona.iterrows() if row['sucursal_nombre'] != pivote_custom_nombre and calcular_distancia_haversine(lat_piv_c, lon_piv_c, float(row['latitud']), float(row['longitud'])) <= radio_km_cust]
                     
-                    # 🛠️ SECCIÓN EDITABLE: El usuario puede sumar, quitar o elegir libremente las sucursales de la zona
                     st.markdown("#### 🛠️ Editor y Selector Manual de Ruta")
                     st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona sin restricciones.")
                     
@@ -404,10 +384,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                         if not sucursales_seleccionadas_ids:
                             st.warning("⚠️ Debes seleccionar al menos una sucursal para la ruta.")
                         else:
-                            # Extraemos los diccionarios de las sucursales seleccionadas a mano
                             bloque_custom = [df_all_sucursales_zona[df_all_sucursales_zona['id_sucursal'] == sid].iloc[0].to_dict() for sid in sucursales_seleccionadas_ids]
-                            
-                            # Optimizamos por proximidad desde el origen elegido
                             bloque_optimizado = optimizar_secuencia_por_proximidad(lat_c_cust, lon_c_cust, bloque_custom)
                             visitas_calc_c, _, _ = simular_ruta_del_dia(bloque_optimizado, hora_inicio_custom, len(bloque_optimizado), False, "Base", (lat_c_cust, lon_c_cust))
                             
@@ -421,7 +398,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                                 ]
                                 
                                 for tiend_idx, v in enumerate(visitas_calc_c):
-                                    orig = next(item for item in bloque_optimizado if item['id_sucursal'] == v.get('ID', v.get('ID Sucursal', '')))
+                                    orig = next(item for item in bloque_optimizado if str(item['id_sucursal']) == str(v.get('ID', v.get('ID Sucursal', ''))))
                                     hl, hs = v.get("ETA Llegada", ""), v.get("ETA Salida", v.get("Hora Salida", ""))
                                     st.session_state.custom_visitas_final.append({
                                         "ID": orig['id_sucursal'], "Sec": tiend_idx+1, "Marca": orig['cliente_marca'], 
@@ -444,30 +421,14 @@ elif modulo_principal == "📋 Control de Inventario y Visitas":
     st.markdown("### 📋 Módulo Administrativo de Inventario")
     tab_vista, tab_edicion = st.tabs(["👁️ Vista General", "✏️ Editor Maestro de Base de Datos"])
     with tab_vista:
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            df_inv = pd.read_sql_query("SELECT id_sucursal, cliente_marca, sucursal_nombre, estado, zona_localidad, estatus_visita, fecha_ultima_visita, visitas_realizadas FROM sucursales ORDER BY estado", conn)
-            conn.close()
-            st.markdown(renderizar_tabla_html(df_inv), unsafe_allow_html=True)
-        except: pass
+        with st.spinner("Consultando Google Sheets..."):
+            df_inv = cargar_inventario_maestro()
+            if not df_inv.empty:
+                st.markdown(renderizar_tabla_html(df_inv[['id_sucursal', 'cliente_marca', 'sucursal_nombre', 'estado', 'zona_localidad', 'estatus_visita', 'visitas_realizadas']]), unsafe_allow_html=True)
     with tab_edicion:
-        st.info("⚠️ **ZONA RESTRINGIDA:** Edición directa. Los cambios son irreversibles.")
-        if st.toggle("🔓 Habilitar Modo Edición Avanzada"):
-            conn = sqlite3.connect(DB_PATH)
-            df_comp = pd.read_sql_query("SELECT * FROM sucursales", conn); conn.close()
-            df_editado = st.data_editor(df_comp, num_rows="dynamic", use_container_width=True, height=500)
-            col_b1, col_b2 = st.columns([1, 2])
-            with col_b1: conf = st.checkbox("☑️ Confirmo que revisé los cambios")
-            with col_b2:
-                if st.button("💾 Sobrescribir Base de Datos", type="primary") and conf:
-                    with st.spinner("Guardando..."):
-                        conn = sqlite3.connect(DB_PATH); cursor = conn.cursor()
-                        df_editado.to_sql("temp_bk", conn, if_exists="replace", index=False)
-                        cursor.execute("DELETE FROM sucursales")
-                        cursor.execute(f"INSERT INTO sucursales ({', '.join(df_editado.columns)}) SELECT {', '.join(df_editado.columns)} FROM temp_bk")
-                        cursor.execute("DROP TABLE temp_bk"); conn.commit(); conn.close()
-                        st.success("✅ Guardado.")
-                        time.sleep(1); st.rerun()
+        st.info("☁️ **MODO CLOUD ACTIVO**: Para proteger la integridad de tus datos y evitar errores en la nube, la edición masiva o eliminación de registros se realiza directamente en tu archivo de Google Sheets.")
+        st.markdown("[🔗 **HAZ CLIC AQUÍ PARA ABRIR TU BASE DE DATOS EN GOOGLE SHEETS**](https://docs.google.com/spreadsheets/d/1ckxKCRYrRdUAL6-jS0sfmgeTWt_-0b5bDzPky6etgbs/edit?usp=drive_web)", unsafe_allow_html=True)
+        st.write("*(Los cambios que guardes allá se reflejarán en esta aplicación y en tu celular al instante).*")
 
 elif modulo_principal == "📥 Agente Enriquecedor de Nuevos Clientes":
     st.markdown("### 📥 Agente Híbrido de Enriquecimiento (6 Campos Base)")
@@ -483,16 +444,16 @@ elif modulo_principal == "📥 Agente Enriquecedor de Nuevos Clientes":
             st.write("👀 **Vista previa:**")
             st.markdown(renderizar_tabla_html(df_input[columnas_requeridas].head(3)), unsafe_allow_html=True)
             if st.button("🚀 Iniciar Agente Híbrido"):
-                conn = sqlite3.connect(DB_PATH)
-                try: ids_existentes = pd.read_sql_query("SELECT id_sucursal FROM sucursales", conn)['id_sucursal'].tolist()
-                except Exception: ids_existentes = []
-                df_duplicados = df_input[df_input['id_sucursal'].isin(ids_existentes)]
-                df_nuevos = df_input[~df_input['id_sucursal'].isin(ids_existentes)]
+                df_full = cargar_inventario_maestro()
+                ids_existentes = df_full['id_sucursal'].astype(str).tolist() if not df_full.empty else []
+                
+                df_duplicados = df_input[df_input['id_sucursal'].astype(str).isin(ids_existentes)]
+                df_nuevos = df_input[~df_input['id_sucursal'].astype(str).isin(ids_existentes)]
                 st.session_state.df_duplicados = df_duplicados.copy()
                 if df_nuevos.empty:
                     st.warning("⚠️ Las sucursales ya existen en la Base de Datos.")
                     st.session_state.geo_procesado = True
-                    conn.close(); st.rerun()
+                    st.rerun()
                 exitosos, fallidos = [], []
                 progreso = st.progress(0, text="Buscando coordenadas...")
                 total_nuevos = len(df_nuevos)
@@ -503,7 +464,6 @@ elif modulo_principal == "📥 Agente Enriquecedor de Nuevos Clientes":
                     fila = {'id_sucursal': str(row['id_sucursal']).strip(), 'sucursal_nombre': sucursal.upper(), 'cliente_marca': marca.upper(), 'latitud': lat, 'longitud': lng, 'estado': est_res.upper() if est_res else estado.upper(), 'zona_localidad': loc_res.upper() if loc_res else localidad.upper(), 'direccion_completa': dire if dire else "NO ENCONTRADA", 'estatus_visita': 'PENDIENTE', 'tipo_visita': 'STANDARD', 'visitas_realizadas': 0}
                     if lat is not None and lng is not None: exitosos.append(fila)
                     else: fallidos.append(fila)
-                conn.close()
                 progreso.empty()
                 st.session_state.df_exitosos = pd.DataFrame(exitosos)
                 st.session_state.df_cuarentena = pd.DataFrame(fallidos)
@@ -541,9 +501,11 @@ elif modulo_principal == "📥 Agente Enriquecedor de Nuevos Clientes":
                 with pd.ExcelWriter(output, engine='openpyxl') as writer: st.session_state.df_exitosos.to_excel(writer, index=False)
                 st.download_button(label="💾 Guardar .xlsx", data=output.getvalue(), file_name="Base_Clientes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             with col_act2:
-                if st.button("⚡ Cargar a Base de Datos"):
-                    inyectar_a_base_maestra_11_campos(st.session_state.df_exitosos)
+                if st.button("⚡ Cargar a Base de Datos en la Nube"):
+                    with st.spinner("Sincronizando nuevas sucursales con Google Sheets..."):
+                        inyectar_nuevas_sucursales(st.session_state.df_exitosos)
                     st.session_state.df_exitosos = pd.DataFrame(); st.session_state.geo_procesado = False
+                    st.rerun()
         st.write("---")
         if st.button("🔄 Reiniciar Módulo"):
             st.session_state.geo_procesado = False; st.rerun()
@@ -566,10 +528,14 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
 
     if st.sidebar.button("🔄 Recalcular Data Mart", type="primary"):
         with st.spinner("Procesando ETL..."):
-            extraer_y_transformar_datos(rendimiento_km_l=var_rendimiento, costo_litro=var_costo_litro, costo_mto_15k=var_costo_mto, sueldo_hora=var_sueldo_hora)
-        st.sidebar.success("✅ Actualizado.")
-        time.sleep(1)
-        st.rerun()
+            try:
+                extraer_y_transformar_datos(rendimiento_km_l=var_rendimiento, costo_litro=var_costo_litro, costo_mto_15k=var_costo_mto, sueldo_hora=var_sueldo_hora)
+                st.sidebar.success("✅ Actualizado.")
+                time.sleep(1)
+                st.rerun()
+            except sqlite3.OperationalError:
+                st.error("⚠️ Tu archivo `etl_kpis.py` aún intenta leer la base de datos vieja (SQLite). ¡Necesitamos refactorizar ese archivo a GSheets también!")
+                st.stop()
 
     if not os.path.exists(DB_KPIS):
         st.info("ℹ️ No hay datos. Haz clic en 'Recalcular Data Mart'.")
@@ -586,9 +552,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
             
             tab_volumen, tab_finanzas, tab_ia = st.tabs(["🗺️ Operación y Cobertura (Gráficos)", "💰 Rentabilidad y Costos", "🤖 Briefing Ejecutivo (IA & PDF)"])
 
-            # ========================================================
-            # PESTAÑA 1: VOLUMEN OPERATIVO + TABLA INTERACTIVA
-            # ========================================================
             with tab_volumen:
                 df_avance['visitas_realizadas'] = pd.to_numeric(df_avance['visitas_realizadas']).fillna(0).astype(int)
                 
@@ -650,7 +613,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                 fig_sun.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=550)
                 st.plotly_chart(fig_sun, use_container_width=True)
 
-                # 🚀 TABLA INTERACTIVA EXPLORADORA
                 st.markdown("### 🗂️ Explorador de Datos y Auditoría de Zonas")
                 st.info("Filtra rápidamente por Estado y Localidad para ver el detalle de cada sucursal de la zona seleccionada.")
                 
@@ -679,9 +641,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                     hide_index=True
                 )
 
-            # ========================================================
-            # PESTAÑA 2: FINANZAS Y RENTABILIDAD
-            # ========================================================
             with tab_finanzas:
                 row_fin = df_finanzas.iloc[0]
                 st.markdown("#### 💵 Impacto Financiero en las Visitas Históricas")
@@ -711,14 +670,10 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                      * **Distancia Total Recorrida:** {row_fin['distancia_total_km']} km
                      """)
 
-            # ========================================================
-            # PESTAÑA 3: BRIEFING EJECUTIVO CON DASHBOARD INTEGRAL VISUAL
-            # ========================================================
             with tab_ia:
                 st.markdown("### 📊 Dashboard Integral & Briefing Gerencial (C-Level)")
                 st.write("Panel de resumen ejecutivo con visuales integrales y redacción analítica por Inteligencia Artificial listo para entrega directiva.")
                 
-                # 🚀 DASHBOARD INTEGRAL VISUAL EN PANTALLA (GRÁFICOS RESUMIDOS)
                 st.markdown("---")
                 st.markdown("#### 🎯 Panel de Control Ejecutivo (KPI Scorecards Visuales)")
                 
@@ -736,7 +691,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                 tiendas_riesgo = len(df_avance[df_avance['visitas_realizadas'] == 0])
                 tiendas_meta = len(df_avance[df_avance['visitas_realizadas'] >= 2])
 
-                # Fila de Gráficos Resumidos para el Directivo
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.markdown("**1️⃣ Proporción de Cobertura en Sucursales**")
@@ -761,7 +715,7 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                     st.plotly_chart(fig_res_sun, use_container_width=True)
 
                 st.markdown("---")
-                st.markdown("#### 📝 Redacción Analítica & Generación de Reporte PDF con Scorecards Visuales")
+                st.markdown("#### 📝 Redacción Analítica & Generación de Reporte PDF")
                 
                 api_key_input = st.text_input("🔑 Pega aquí tu API Key gratuita de Groq (gsk_...):", type="password")
                 
@@ -793,11 +747,7 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 REGLA CRÍTICA: Tono directivo, asertivo, cuantitativo y formal. No utilices asteriscos (*) ni formato Markdown extraño. Presenta secciones limpias separadas por saltos de línea claros.
                                 """
                                 
-                                # 2. Llamada a la API de Groq
-                                client = OpenAI(
-                                    base_url="https://api.groq.com/openai/v1",
-                                    api_key=api_key_input
-                                )
+                                client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=api_key_input)
                                 response = client.chat.completions.create(
                                     model="llama-3.3-70b-versatile",
                                     messages=[{"role": "user", "content": prompt}],
@@ -807,7 +757,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 
                                 st.success("✅ Briefing Ejecutivo generado con éxito.")
                                 
-                                # Visualizador tipo Tarjeta Ejecutiva en pantalla
                                 st.markdown("---")
                                 st.markdown(f"""
                                     <div style="background-color: #f0f4f8; padding: 20px; border-radius: 8px; border-left: 6px solid #002F6C;">
@@ -817,11 +766,8 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 """, unsafe_allow_html=True)
                                 st.markdown("---")
                                 
-                                # 3. Creación Profesional del PDF Directivo (Con Scorecards Visuales integradas)
                                 pdf = FPDF()
                                 pdf.add_page()
-                                
-                                # Encabezado Corporativo
                                 pdf.set_font("Arial", 'B', 15)
                                 pdf.set_text_color(0, 47, 108)
                                 pdf.cell(200, 10, txt="RUTAS-QSR | BRIEFING EJECUTIVO GERENCIAL", ln=True, align='C')
@@ -830,14 +776,12 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 pdf.cell(200, 6, txt="Dashboard Integral de KPIs y Analisis de Cobertura Operativa", ln=True, align='C')
                                 pdf.ln(6)
                                 
-                                # 📊 DIBUJANDO LOS SCORECARDS VISUALES EN EL PDF (Tarjetas de Impacto)
                                 pdf.set_font("Arial", 'B', 11)
                                 pdf.set_fill_color(0, 47, 108)
                                 pdf.set_text_color(255, 255, 255)
                                 pdf.cell(190, 8, txt="  DASHBOARD INTEGRAL - KPI SCORECARDS VISUALES", ln=True, fill=True)
                                 pdf.ln(4)
                                 
-                                # Tarjeta 1: Total Sucursales & Visitas Históricas
                                 pdf.set_fill_color(240, 244, 248)
                                 pdf.set_text_color(0, 47, 108)
                                 pdf.set_font("Arial", 'B', 10)
@@ -852,7 +796,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 pdf.cell(92, 6, txt=f"  Visitas Históricas Totales: {total_historico}", border=1, ln=True)
                                 pdf.ln(3)
                                 
-                                # Tarjeta 2: Semáforo de Riesgos (Rojo / Verde)
                                 pdf.set_font("Arial", 'B', 10)
                                 pdf.set_text_color(180, 0, 0)
                                 pdf.cell(92, 7, txt="  ZONA DE RIESGO CRITICO", border=1, fill=True)
@@ -867,7 +810,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 pdf.cell(92, 6, txt=f"  Sucursales con 2+ Visitas: {tiendas_meta}", border=1, ln=True)
                                 pdf.ln(3)
                                 
-                                # Tarjeta 3: Financiero (TCO y Gasto)
                                 pdf.set_font("Arial", 'B', 10)
                                 pdf.set_text_color(0, 47, 108)
                                 pdf.cell(190, 7, txt="  IMPACTO FINANCIERO Y TCO", border=1, fill=True, ln=True)
@@ -876,7 +818,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 pdf.cell(95, 6, txt=f"  Costo por Kilometro (TCO): ${row_fin['tco_por_km_mxn']:,.2f} MXN/km", border=1, ln=True)
                                 pdf.ln(8)
                                 
-                                # Contenido del Briefing analítico generado por la IA
                                 pdf.set_font("Arial", 'B', 11)
                                 pdf.set_text_color(0, 47, 108)
                                 pdf.cell(190, 8, txt="  ANALISIS ESTRATEGICO Y PLAN DE ACCION C-LEVEL", ln=True)
@@ -895,7 +836,6 @@ elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
                                 else:
                                     pdf_bytes = raw_output
                                 
-                                # 4. Botón de Descarga Directiva
                                 st.download_button(
                                     label="📥 Descargar Briefing Ejecutivo en PDF Directivo (Con Scorecards)",
                                     data=pdf_bytes,
