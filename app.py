@@ -10,7 +10,7 @@ import urllib.parse
 import math
 import io
 import folium
-from streamlit_folium import st_folium
+import streamlit.components.v1 as components
 
 try:
     import plotly.express as px
@@ -94,6 +94,11 @@ st.title("🚗 Panel de Control Logístico | RUTAS-QSR")
 def renderizar_tabla_html(df):
     if df is None or df.empty: return ""
     return f'<div class="contenedor-tabla-scroll">{df.to_html(classes="dataframe-renderizada", index=False, escape=False)}</div>'
+
+def renderizar_mapa_seguro(mapa_folium, alto=450):
+    """Renderizador optimizado por HTML puro. Elimina errores de serialización en la nube."""
+    mapa_html = mapa_folium._repr_html_()
+    components.html(mapa_html, height=alto, scrolling=True)
 
 def buscar_datos_osm_hibrido(marca, sucursal, localidad, estado):
     headers = {'User-Agent': 'RutasQSR_HybridAgent/1.0'}
@@ -255,8 +260,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                             actualizar_estatus_sucursal(id_s, "COMPLETADA")
                     st.session_state.diaria_simulada = False; st.rerun()
                 
-                # MAPA BLINDADO CONTRA MARSHALL EXCEPTION (Línea 248)
-                st_folium(crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje)), width=1200, height=450, returned_objects=[])
+                # RENDERIZADO DE MAPA BLINDADO (SIN ST_FOLIUM)
+                mapa_diario = crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje))
+                renderizar_mapa_seguro(mapa_diario, alto=450)
 
         with tab_radial:
             col_rv1, col_rv2 = st.columns(2)
@@ -333,8 +339,8 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 mapa_rad = crear_mapa_base(st.session_state.radial_puntos_mapa, obtener_ruta_vial_real(st.session_state.radial_coords_viaje))
                 folium.Circle(location=[st.session_state.radial_lat_piv, st.session_state.radial_lon_piv], radius=st.session_state.radial_radio * 1000, color='red', weight=2, fill=True, fillOpacity=0.1).add_to(mapa_rad)
                 
-                # MAPA BLINDADO CONTRA MARSHALL EXCEPTION
-                st_folium(mapa_rad, width=1200, height=450, returned_objects=[])
+                # RENDERIZADO DE MAPA BLINDADO
+                renderizar_mapa_seguro(mapa_rad, alto=450)
 
         with tab_custom:
             st.markdown("### 🔧 Diseñador de Rutas Personalizables (Libre de Historial)")
@@ -428,8 +434,8 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     mapa_cust = crear_mapa_base(st.session_state.custom_puntos_mapa, obtener_ruta_vial_real(st.session_state.custom_coords_viaje))
                     folium.Circle(location=[lat_piv_c, lon_piv_c], radius=radio_km_cust * 1000, color='purple', weight=2, fill=True, fillOpacity=0.08).add_to(mapa_cust)
                     
-                    # MAPA BLINDADO CONTRA MARSHALL EXCEPTION
-                    st_folium(mapa_cust, width=1200, height=450, returned_objects=[])
+                    # RENDERIZADO DE MAPA BLINDADO
+                    renderizar_mapa_seguro(mapa_cust, alto=450)
 
 elif modulo_principal == "📋 Control de Inventario y Visitas":
     st.markdown("### 📋 Módulo Administrativo de Inventario")
