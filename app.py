@@ -99,6 +99,14 @@ def renderizar_mapa_seguro(mapa_folium, alto=450):
     mapa_html = mapa_folium._repr_html_()
     components.html(mapa_html, height=alto, scrolling=True)
 
+def generar_link_google_maps(puntos_coords):
+    """Genera una URL universal de Google Maps encadenando todas las coordenadas del viaje."""
+    if not puntos_coords or len(puntos_coords) < 1:
+        return "#"
+    base_url = "https://www.google.com/maps/dir/"
+    segmentos = [f"{lat},{lon}" for lat, lon in puntos_coords]
+    return base_url + "/".join(segmentos)
+
 def buscar_datos_osm_hibrido(marca, sucursal, localidad, estado):
     headers = {'User-Agent': 'RutasQSR_HybridAgent/1.0'}
     consultas = [f"{marca} {sucursal} {localidad} {estado} Mexico", f"{marca} {sucursal} {estado} Mexico", f"{marca} {sucursal} Mexico"]
@@ -251,6 +259,12 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             if st.session_state.diaria_simulada:
                 st.write("---\n### 📋 Itinerario Diario")
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.diaria_visitas_final)), unsafe_allow_html=True)
+                
+                # BOTÓN DIRECTO A GOOGLE MAPS
+                link_gmaps_diario = generar_link_google_maps(st.session_state.diaria_coords_viaje)
+                st.markdown(f'<a href="{link_gmaps_diario}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Completa en Google Maps</button></a>', unsafe_allow_html=True)
+                st.write("")
+
                 ids_en_ruta = [item["ID"] for item in st.session_state.diaria_visitas_final]
                 completadas_sel = st.multiselect("Marcar completadas (Se sumará +1 a su histórico):", options=ids_en_ruta, format_func=lambda x: next(f"[{item['Marca']}] {item['Sucursal']}" for item in st.session_state.diaria_visitas_final if item["ID"] == x))
                 if st.button("☁️ Guardar Seleccionadas como COMPLETADAS"):
@@ -310,7 +324,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                                 st.session_state.radial_lat_piv, st.session_state.radial_lon_piv, st.session_state.radial_radio = lat_pivote, lon_pivote, radio_km
                                 st.session_state.radial_visitas_final = []; st.session_state.radial_coords_viaje = [(lat_c_rad, lon_c_rad)]
                                 
-                                # CORRECCIÓN CRÍTICA DE LATITUD Y LONGITUD DEL PIVOTE
                                 st.session_state.radial_puntos_mapa = [
                                     {"lat": lat_c_rad, "lon": lon_c_rad, "name": f"📍 ORIGEN", "idx": 0}, 
                                     {"lat": lat_pivote, "lon": lon_pivote, "name": f"🌟 PIVOTE: {tienda_pivote_nombre}", "idx": "Pivote"}
@@ -332,6 +345,12 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                                     tiend_inc += 1
             if st.session_state.radial_simulada:
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.radial_visitas_final)), unsafe_allow_html=True)
+                
+                # BOTÓN DIRECTO A GOOGLE MAPS (RADIAL)
+                link_gmaps_radial = generar_link_google_maps(st.session_state.radial_coords_viaje)
+                st.markdown(f'<a href="{link_gmaps_radial}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Radial en Google Maps</button></a>', unsafe_allow_html=True)
+                st.write("")
+
                 ids_en_ruta = [item["ID"] for item in st.session_state.radial_visitas_final]
                 completadas_sel = st.multiselect("Marcar completadas (+1 visita):", options=ids_en_ruta, format_func=lambda x: next(f"[{item['Marca']}] {item['Sucursal']}" for item in st.session_state.radial_visitas_final if item["ID"] == x))
                 if st.button("☁️ Guardar Seleccionadas como COMPLETADAS", key="btn_save_rad"):
@@ -434,6 +453,11 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     st.markdown("### 📋 Itinerario de la Ruta Personalizada")
                     st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.custom_visitas_final)), unsafe_allow_html=True)
                     
+                    # BOTÓN DIRECTO A GOOGLE MAPS (CUSTOM)
+                    link_gmaps_custom = generar_link_google_maps(st.session_state.custom_coords_viaje)
+                    st.markdown(f'<a href="{link_gmaps_custom}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Personalizada en Google Maps</button></a>', unsafe_allow_html=True)
+                    st.write("")
+
                     mapa_cust = crear_mapa_base(st.session_state.custom_puntos_mapa, obtener_ruta_vial_real(st.session_state.custom_coords_viaje))
                     folium.Circle(location=[lat_piv_c, lon_piv_c], radius=radio_km_cust * 1000, color='purple', weight=2, fill=True, fillOpacity=0.08).add_to(mapa_cust)
                     
