@@ -100,7 +100,6 @@ def renderizar_mapa_seguro(mapa_folium, alto=450):
     components.html(mapa_html, height=alto, scrolling=True)
 
 def generar_link_google_maps(puntos_coords):
-    """Genera una URL universal de Google Maps encadenando todas las coordenadas del viaje."""
     if not puntos_coords or len(puntos_coords) < 1:
         return "#"
     base_url = "https://www.google.com/maps/dir/"
@@ -169,12 +168,12 @@ def crear_mapa_base(puntos_marcadores, ruta_linea=None, color_linea="#002F6C"):
 st.sidebar.header("☁️ Ecosistema Cloud Activo")
 st.sidebar.info("Tu base de datos ahora está sincronizada en tiempo real con Google Sheets.")
 
+# 🔒 MENÚ PRINCIPAL LIMPIO (SIN EL AGENTE ENRIQUECEDOR VISIBLE)
 modulo_principal = st.radio(
     "Selecciona Módulo de Trabajo:", 
     [
         "🗺️ Planeación y Ruteo Inteligente", 
         "📋 Control de Inventario y Visitas", 
-        "📥 Agente Enriquecedor de Nuevos Clientes",
         "📊 Dashboard de KPIs y Analítica Ejecutiva"
     ], 
     horizontal=True
@@ -260,7 +259,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 st.write("---\n### 📋 Itinerario Diario")
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.diaria_visitas_final)), unsafe_allow_html=True)
                 
-                # BOTÓN DIRECTO A GOOGLE MAPS
                 link_gmaps_diario = generar_link_google_maps(st.session_state.diaria_coords_viaje)
                 st.markdown(f'<a href="{link_gmaps_diario}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Completa en Google Maps</button></a>', unsafe_allow_html=True)
                 st.write("")
@@ -346,7 +344,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
             if st.session_state.radial_simulada:
                 st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.radial_visitas_final)), unsafe_allow_html=True)
                 
-                # BOTÓN DIRECTO A GOOGLE MAPS (RADIAL)
                 link_gmaps_radial = generar_link_google_maps(st.session_state.radial_coords_viaje)
                 st.markdown(f'<a href="{link_gmaps_radial}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Radial en Google Maps</button></a>', unsafe_allow_html=True)
                 st.write("")
@@ -453,7 +450,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     st.markdown("### 📋 Itinerario de la Ruta Personalizada")
                     st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.custom_visitas_final)), unsafe_allow_html=True)
                     
-                    # BOTÓN DIRECTO A GOOGLE MAPS (CUSTOM)
                     link_gmaps_custom = generar_link_google_maps(st.session_state.custom_coords_viaje)
                     st.markdown(f'<a href="{link_gmaps_custom}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Personalizada en Google Maps</button></a>', unsafe_allow_html=True)
                     st.write("")
@@ -475,86 +471,6 @@ elif modulo_principal == "📋 Control de Inventario y Visitas":
         st.info("☁️ **MODO CLOUD ACTIVO**: Para proteger la integridad de tus datos y evitar errores en la nube, la edición masiva o eliminación de registros se realiza directamente en tu archivo de Google Sheets.")
         st.markdown("[🔗 **HAZ CLIC AQUÍ PARA ABRIR TU BASE DE DATOS EN GOOGLE SHEETS**](https://docs.google.com/spreadsheets/d/1ckxKCRYrRdUAL6-jS0sfmgeTWt_-0b5bDzPky6etgbs/edit?usp=drive_web)", unsafe_allow_html=True)
         st.write("*(Los cambios que guardes allá se reflejarán en esta aplicación y en tu celular al instante).*")
-
-elif modulo_principal == "📥 Agente Enriquecedor de Nuevos Clientes":
-    st.markdown("### 📥 Agente Híbrido de Enriquecimiento (6 Campos Base)")
-    excel_crudo = st.file_uploader("Sube la base de datos del cliente (.csv o .xlsx)", type=["xlsx", "csv"])
-    if excel_crudo and not st.session_state.geo_procesado:
-        if excel_crudo.name.lower().endswith('.csv'): df_input = pd.read_csv(excel_crudo)
-        else: df_input = pd.read_excel(excel_crudo)
-        df_input.columns = df_input.columns.str.strip().str.lower()
-        columnas_requeridas = ['id_sucursal', 'sucursal_nombre', 'cliente_marca', 'franquicia', 'zona_localidad', 'estado']
-        faltantes = [c for c in columnas_requeridas if c not in df_input.columns]
-        if faltantes: st.error(f"❌ Error: Faltan estas columnas: {', '.join(faltantes)}")
-        else:
-            st.write("👀 **Vista previa:**")
-            st.markdown(renderizar_tabla_html(df_input[columnas_requeridas].head(3)), unsafe_allow_html=True)
-            if st.button("🚀 Iniciar Agente Híbrido"):
-                df_full = cargar_inventario_maestro()
-                ids_existentes = df_full['id_sucursal'].astype(str).tolist() if not df_full.empty else []
-                
-                df_duplicados = df_input[df_input['id_sucursal'].astype(str).isin(ids_existentes)]
-                df_nuevos = df_input[~df_input['id_sucursal'].astype(str).isin(ids_existentes)]
-                st.session_state.df_duplicados = df_duplicados.copy()
-                if df_nuevos.empty:
-                    st.warning("⚠️ Las sucursales ya existen en la Base de Datos.")
-                    st.session_state.geo_procesado = True
-                    st.rerun()
-                exitosos, fallidos = [], []
-                progreso = st.progress(0, text="Buscando coordenadas...")
-                total_nuevos = len(df_nuevos)
-                for i, (idx_row, row) in enumerate(df_nuevos.iterrows()):
-                    marca, sucursal, localidad, estado = str(row['cliente_marca']).strip(), str(row['sucursal_nombre']).strip(), str(row['zona_localidad']).strip(), str(row['estado']).strip()
-                    progreso.progress((i + 1) / total_nuevos, text=f"📍 Buscando: {sucursal}...")
-                    lat, lng, dire, est_res, loc_res = buscar_datos_osm_hibrido(marca, sucursal, localidad, estado)
-                    fila = {'id_sucursal': str(row['id_sucursal']).strip(), 'sucursal_nombre': sucursal.upper(), 'cliente_marca': marca.upper(), 'latitud': lat, 'longitud': lng, 'estado': est_res.upper() if est_res else estado.upper(), 'zona_localidad': loc_res.upper() if loc_res else localidad.upper(), 'direccion_completa': dire if dire else "NO ENCONTRADA", 'estatus_visita': 'PENDIENTE', 'tipo_visita': 'STANDARD', 'visitas_realizadas': 0}
-                    if lat is not None and lng is not None: exitosos.append(fila)
-                    else: fallidos.append(fila)
-                progreso.empty()
-                st.session_state.df_exitosos = pd.DataFrame(exitosos)
-                st.session_state.df_cuarentena = pd.DataFrame(fallidos)
-                st.session_state.geo_procesado = True
-                st.rerun()
-
-    if st.session_state.geo_procesado:
-        if not st.session_state.df_duplicados.empty:
-            st.warning(f"⚠️ {len(st.session_state.df_duplicados)} ignoradas (Ya existen).")
-        c1, c2 = st.columns(2)
-        with c1: st.success(f"✅ {len(st.session_state.df_exitosos)} Enriquecidas")
-        with c2: st.error(f"🚨 {len(st.session_state.df_cuarentena)} en Cuarentena")
-        if not st.session_state.df_cuarentena.empty:
-            st.markdown("### 🏥 Cuarentena Manual")
-            df_editado = st.data_editor(st.session_state.df_cuarentena[['id_sucursal', 'cliente_marca', 'sucursal_nombre', 'latitud', 'longitud', 'direccion_completa']], num_rows="dynamic", use_container_width=True)
-            if st.button("💾 Rescatar"):
-                rescatados, siguen_mal = [], []
-                df_completo = st.session_state.df_cuarentena.copy()
-                for i, row in df_editado.iterrows():
-                    lat_val, lon_val, dir_val = row['latitud'], row['longitud'], row['direccion_completa']
-                    if pd.notna(lat_val) and pd.notna(lon_val) and str(lat_val).strip() != "":
-                        fila = df_completo.iloc[i].copy(); fila['latitud'], fila['longitud'], fila['direccion_completa'] = float(lat_val), float(lon_val), str(dir_val)
-                        rescatados.append(fila.to_dict())
-                    else: siguen_mal.append(df_completo.iloc[i].to_dict())
-                if rescatados:
-                    st.session_state.df_exitosos = pd.concat([st.session_state.df_exitosos, pd.DataFrame(rescatados)], ignore_index=True)
-                st.session_state.df_cuarentena = pd.DataFrame(siguen_mal)
-                st.rerun()
-        if not st.session_state.df_exitosos.empty:
-            st.markdown("### 🚀 Acciones Finales")
-            st.markdown(renderizar_tabla_html(st.session_state.df_exitosos), unsafe_allow_html=True)
-            col_act1, col_act2 = st.columns(2)
-            with col_act1:
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer: st.session_state.df_exitosos.to_excel(writer, index=False)
-                st.download_button(label="💾 Guardar .xlsx", data=output.getvalue(), file_name="Base_Clientes.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-            with col_act2:
-                if st.button("⚡ Cargar a Base de Datos en la Nube"):
-                    with st.spinner("Sincronizando nuevas sucursales con Google Sheets..."):
-                        inyectar_nuevas_sucursales(st.session_state.df_exitosos)
-                    st.session_state.df_exitosos = pd.DataFrame(); st.session_state.geo_procesado = False
-                    st.rerun()
-        st.write("---")
-        if st.button("🔄 Reiniciar Módulo"):
-            st.session_state.geo_procesado = False; st.rerun()
 
 elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
     st.markdown("### 📊 Dashboard Ejecutivo")
