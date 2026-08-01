@@ -96,7 +96,6 @@ def renderizar_tabla_html(df):
     return f'<div class="contenedor-tabla-scroll">{df.to_html(classes="dataframe-renderizada", index=False, escape=False)}</div>'
 
 def renderizar_mapa_seguro(mapa_folium, alto=450):
-    """Renderizador optimizado por HTML puro. Elimina errores de serialización en la nube."""
     mapa_html = mapa_folium._repr_html_()
     components.html(mapa_html, height=alto, scrolling=True)
 
@@ -260,7 +259,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                             actualizar_estatus_sucursal(id_s, "COMPLETADA")
                     st.session_state.diaria_simulada = False; st.rerun()
                 
-                # RENDERIZADO DE MAPA BLINDADO (SIN ST_FOLIUM)
                 mapa_diario = crear_mapa_base(st.session_state.diaria_puntos_mapa, obtener_ruta_vial_real(st.session_state.diaria_coords_viaje))
                 renderizar_mapa_seguro(mapa_diario, alto=450)
 
@@ -311,7 +309,13 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                                 st.session_state.radial_simulada = True; st.session_state.radial_pivote = tienda_pivote_nombre
                                 st.session_state.radial_lat_piv, st.session_state.radial_lon_piv, st.session_state.radial_radio = lat_pivote, lon_pivote, radio_km
                                 st.session_state.radial_visitas_final = []; st.session_state.radial_coords_viaje = [(lat_c_rad, lon_c_rad)]
-                                st.session_state.radial_puntos_mapa = [{"lat": lat_c_rad, "lon": lon_c_rad, "name": f"📍 ORIGEN", "idx": 0}, {"lat": lat_pivote, "lon": lat_pivote, "name": f"🌟 PIVOTE: {tienda_pivote_nombre}", "idx": "Pivote"}]
+                                
+                                # CORRECCIÓN CRÍTICA DE LATITUD Y LONGITUD DEL PIVOTE
+                                st.session_state.radial_puntos_mapa = [
+                                    {"lat": lat_c_rad, "lon": lon_c_rad, "name": f"📍 ORIGEN", "idx": 0}, 
+                                    {"lat": lat_pivote, "lon": lon_pivote, "name": f"🌟 PIVOTE: {tienda_pivote_nombre}", "idx": "Pivote"}
+                                ]
+                                
                                 tiend_inc = 0
                                 for idx, v in enumerate(visitas_calc):
                                     orig = next(item for item in bloque if str(item['id_sucursal']) == str(v.get('ID', v.get('ID Sucursal', ''))))
@@ -339,7 +343,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 mapa_rad = crear_mapa_base(st.session_state.radial_puntos_mapa, obtener_ruta_vial_real(st.session_state.radial_coords_viaje))
                 folium.Circle(location=[st.session_state.radial_lat_piv, st.session_state.radial_lon_piv], radius=st.session_state.radial_radio * 1000, color='red', weight=2, fill=True, fillOpacity=0.1).add_to(mapa_rad)
                 
-                # RENDERIZADO DE MAPA BLINDADO
                 renderizar_mapa_seguro(mapa_rad, alto=450)
 
         with tab_custom:
@@ -434,7 +437,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     mapa_cust = crear_mapa_base(st.session_state.custom_puntos_mapa, obtener_ruta_vial_real(st.session_state.custom_coords_viaje))
                     folium.Circle(location=[lat_piv_c, lon_piv_c], radius=radio_km_cust * 1000, color='purple', weight=2, fill=True, fillOpacity=0.08).add_to(mapa_cust)
                     
-                    # RENDERIZADO DE MAPA BLINDADO
                     renderizar_mapa_seguro(mapa_cust, alto=450)
 
 elif modulo_principal == "📋 Control de Inventario y Visitas":
