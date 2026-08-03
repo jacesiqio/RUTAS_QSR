@@ -43,7 +43,10 @@ try:
 except ImportError:
     from motor_logistico import generar_clusters_geograficos, optimizar_secuencia_por_proximidad
 
-# 🛡️ BLINDAJE DE SESIÓN
+# 🛡️ BLINDAJE DE SESIÓN Y SEGURIDAD
+if 'auth_inventario' not in st.session_state:
+    st.session_state.auth_inventario = False
+
 if 'diaria_simulada' not in st.session_state:
     st.session_state.diaria_simulada = False
     st.session_state.diaria_visitas_final = []
@@ -309,7 +312,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     col1, col2 = st.columns([2, 1])
                     with col1: tienda_pivote_nombre = st.selectbox("Pivote (Centro Radar):", df_pivotes_pool['sucursal_nombre'].tolist(), key="rad_piv")
                     with col2: 
-                        # 🚀 MODIFICADO: Radio de hasta 100 km, en rangos de 5 en 5 km
                         radio_km = st.slider("Radio (Km):", min_value=5.0, max_value=100.0, value=15.0, step=5.0, key="rad_km")
                     if st.button("🔍 Escanear Perímetro y Generar Ruta", key="btn_rad"):
                         pivote = df_pivotes_pool[df_pivotes_pool['sucursal_nombre'] == tienda_pivote_nombre].iloc[0]
@@ -400,7 +402,6 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     col_piv1, col_piv2 = st.columns([2, 1])
                     with col_piv1: pivote_custom_nombre = st.selectbox("Pivote (Centro Radar Base):", df_all_sucursales_zona['sucursal_nombre'].tolist(), key="custom_piv")
                     with col_piv2: 
-                        # 🚀 MODIFICADO: Radio personalizable de hasta 100 km, de 5 en 5 km
                         radio_km_cust = st.slider("Radio Ideal (Km):", min_value=5.0, max_value=100.0, value=20.0, step=5.0, key="custom_km")
                     
                     pivote_obj = df_all_sucursales_zona[df_all_sucursales_zona['sucursal_nombre'] == pivote_custom_nombre].iloc[0]
@@ -462,18 +463,47 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     
                     renderizar_mapa_seguro(mapa_cust, alto=450)
 
+# ==========================================
+# 🔒 MÓDULO DE INVENTARIO CON CONTRASEÑA
+# ==========================================
 elif modulo_principal == "📋 Control de Inventario y Visitas":
     st.markdown("### 📋 Módulo Administrativo de Inventario")
-    tab_vista, tab_edicion = st.tabs(["👁️ Vista General", "✏️ Editor Maestro de Base de Datos"])
-    with tab_vista:
-        with st.spinner("Consultando Google Sheets..."):
-            df_inv = cargar_inventario_maestro()
-            if not df_inv.empty:
-                st.markdown(renderizar_tabla_html(df_inv[['id_sucursal', 'cliente_marca', 'sucursal_nombre', 'estado', 'zona_localidad', 'estatus_visita', 'visitas_realizadas']]), unsafe_allow_html=True)
-    with tab_edicion:
-        st.info("☁️ **MODO CLOUD ACTIVO**: Para proteger la integridad de tus datos y evitar errores en la nube, la edición masiva o eliminación de registros se realiza directamente en tu archivo de Google Sheets.")
-        st.markdown("[🔗 **HAZ CLIC AQUÍ PARA ABRIR TU BASE DE DATOS EN GOOGLE SHEETS**](https://docs.google.com/spreadsheets/d/1ckxKCRYrRdUAL6-jS0sfmgeTWt_-0b5bDzPky6etgbs/edit?usp=drive_web)", unsafe_allow_html=True)
-        st.write("*(Los cambios que guardes allá se reflejarán en esta aplicación y en tu celular al instante).*")
+    
+    if not st.session_state.auth_inventario:
+        st.warning("🔒 Acceso Restringido. Esta sección es exclusiva para Administradores.")
+        col_pwd1, col_pwd2 = st.columns([2, 1])
+        with col_pwd1:
+            pwd_input = st.text_input("Ingresa la contraseña maestra:", type="password")
+        with col_pwd2:
+            st.write("")
+            st.write("")
+            if st.button("🔑 Desbloquear Panel"):
+                # ---> AQUÍ ESTÁ TU CONTRASEÑA (Cámbiala si lo deseas) <---
+                if pwd_input == "QsrAdmin2024!":
+                    st.session_state.auth_inventario = True
+                    st.rerun()
+                elif pwd_input != "":
+                    st.error("❌ Contraseña incorrecta.")
+    else:
+        # Botón para cerrar sesión por seguridad
+        col_btn1, col_btn2 = st.columns([3, 1])
+        with col_btn2:
+            if st.button("🔒 Cerrar Sesión Segura"):
+                st.session_state.auth_inventario = False
+                st.rerun()
+        
+        st.write("---")
+        # --- CONTENIDO ORIGINAL DESBLOQUEADO ---
+        tab_vista, tab_edicion = st.tabs(["👁️ Vista General", "✏️ Editor Maestro de Base de Datos"])
+        with tab_vista:
+            with st.spinner("Consultando Google Sheets..."):
+                df_inv = cargar_inventario_maestro()
+                if not df_inv.empty:
+                    st.markdown(renderizar_tabla_html(df_inv[['id_sucursal', 'cliente_marca', 'sucursal_nombre', 'estado', 'zona_localidad', 'estatus_visita', 'visitas_realizadas']]), unsafe_allow_html=True)
+        with tab_edicion:
+            st.info("☁️ **MODO CLOUD ACTIVO**: Para proteger la integridad de tus datos y evitar errores en la nube, la edición masiva o eliminación de registros se realiza directamente en tu archivo de Google Sheets.")
+            st.markdown("[🔗 **HAZ CLIC AQUÍ PARA ABRIR TU BASE DE DATOS EN GOOGLE SHEETS**](https://docs.google.com/spreadsheets/d/1ckxKCRYrRdUAL6-jS0sfmgeTWt_-0b5bDzPky6etgbs/edit?usp=drive_web)", unsafe_allow_html=True)
+            st.write("*(Los cambios que guardes allá se reflejarán en esta aplicación y en tu celular al instante).*")
 
 elif modulo_principal == "📊 Dashboard de KPIs y Analítica Ejecutiva":
     st.markdown("### 📊 Dashboard Ejecutivo")
