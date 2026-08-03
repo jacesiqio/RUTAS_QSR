@@ -168,7 +168,6 @@ def crear_mapa_base(puntos_marcadores, ruta_linea=None, color_linea="#002F6C"):
 st.sidebar.header("☁️ Ecosistema Cloud Activo")
 st.sidebar.info("Tu base de datos ahora está sincronizada en tiempo real con Google Sheets.")
 
-# 🔒 MENÚ PRINCIPAL LIMPIO (SIN EL AGENTE ENRIQUECEDOR VISIBLE)
 modulo_principal = st.radio(
     "Selecciona Módulo de Trabajo:", 
     [
@@ -309,7 +308,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 if not df_pivotes_pool.empty:
                     col1, col2 = st.columns([2, 1])
                     with col1: tienda_pivote_nombre = st.selectbox("Pivote (Centro Radar):", df_pivotes_pool['sucursal_nombre'].tolist(), key="rad_piv")
-                    with col2: radio_km = st.slider("Radio (Km):", 1.0, 20.0, 3.0, step=0.5, key="rad_km")
+                    with col2: 
+                        # 🚀 MODIFICADO: Radio de hasta 100 km, en rangos de 5 en 5 km
+                        radio_km = st.slider("Radio (Km):", min_value=5.0, max_value=100.0, value=15.0, step=5.0, key="rad_km")
                     if st.button("🔍 Escanear Perímetro y Generar Ruta", key="btn_rad"):
                         pivote = df_pivotes_pool[df_pivotes_pool['sucursal_nombre'] == tienda_pivote_nombre].iloc[0]
                         lat_pivote, lon_pivote = float(pivote['latitud']), float(pivote['longitud'])
@@ -398,7 +399,9 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 if not df_all_sucursales_zona.empty:
                     col_piv1, col_piv2 = st.columns([2, 1])
                     with col_piv1: pivote_custom_nombre = st.selectbox("Pivote (Centro Radar Base):", df_all_sucursales_zona['sucursal_nombre'].tolist(), key="custom_piv")
-                    with col_piv2: radio_km_cust = st.slider("Radio Ideal (Km):", 1.0, 25.0, 5.0, step=0.5, key="custom_km")
+                    with col_piv2: 
+                        # 🚀 MODIFICADO: Radio personalizable de hasta 100 km, de 5 en 5 km
+                        radio_km_cust = st.slider("Radio Ideal (Km):", min_value=5.0, max_value=100.0, value=20.0, step=5.0, key="custom_km")
                     
                     pivote_obj = df_all_sucursales_zona[df_all_sucursales_zona['sucursal_nombre'] == pivote_custom_nombre].iloc[0]
                     lat_piv_c, lon_piv_c = float(pivote_obj['latitud']), float(pivote_obj['longitud'])
@@ -406,7 +409,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     sugeridas_radio = [row.to_dict() for idx, row in df_all_sucursales_zona.iterrows() if row['sucursal_nombre'] != pivote_custom_nombre and calcular_distancia_haversine(lat_piv_c, lon_piv_c, float(row['latitud']), float(row['longitud'])) <= radio_km_cust]
                     
                     st.markdown("#### 🛠️ Editor y Selector Manual de Ruta")
-                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona sin restricciones.")
+                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona senza restricciones.")
                     
                     ids_sugeridos_defaults = [s['id_sucursal'] for s in optimizar_secuencia_por_proximidad(lat_c_cust, lon_c_cust, sugeridas_radio)[:objetivo_visitas_custom]]
                     
