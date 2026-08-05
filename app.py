@@ -52,24 +52,27 @@ if 'diaria_simulada' not in st.session_state:
     st.session_state.diaria_visitas_final = []
     st.session_state.diaria_puntos_mapa = []
     st.session_state.diaria_coords_viaje = []
-    st.session_state.diaria_ruta_n = 1
-    st.session_state.diaria_alcaldia = ""
 
 if 'radial_simulada' not in st.session_state:
     st.session_state.radial_simulada = False
     st.session_state.radial_visitas_final = []
     st.session_state.radial_puntos_mapa = []
     st.session_state.radial_coords_viaje = []
-    st.session_state.radial_pivote = ""
-    st.session_state.radial_lat_piv = 0.0
-    st.session_state.radial_lon_piv = 0.0
-    st.session_state.radial_radio = 0.0
 
 if 'custom_simulada' not in st.session_state:
     st.session_state.custom_simulada = False
     st.session_state.custom_visitas_final = []
     st.session_state.custom_puntos_mapa = []
     st.session_state.custom_coords_viaje = []
+
+# --- VARIABLES PARA EL RUTEO EXPRÉS ---
+if 'express_puntos_internet' not in st.session_state:
+    st.session_state.express_puntos_internet = []
+if 'express_simulada' not in st.session_state:
+    st.session_state.express_simulada = False
+    st.session_state.express_visitas_final = []
+    st.session_state.express_puntos_mapa = []
+    st.session_state.express_coords_viaje = []
 
 if 'geo_procesado' not in st.session_state:
     st.session_state.geo_procesado = False
@@ -109,25 +112,18 @@ def generar_link_google_maps(puntos_coords):
     segmentos = [f"{lat},{lon}" for lat, lon in puntos_coords]
     return base_url + "/".join(segmentos)
 
-def buscar_datos_osm_hibrido(marca, sucursal, localidad, estado):
-    headers = {'User-Agent': 'RutasQSR_HybridAgent/1.0'}
-    consultas = [f"{marca} {sucursal} {localidad} {estado} Mexico", f"{marca} {sucursal} {estado} Mexico", f"{marca} {sucursal} Mexico"]
-    for query in consultas:
-        q_str = re.sub(' +', ' ', query).strip()
-        url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(q_str)}&format=json&limit=1&addressdetails=1"
-        try:
-            time.sleep(1.2)
-            res = requests.get(url, headers=headers, timeout=10).json()
-            if res:
-                data = res[0]
-                lat, lng = float(data['lat']), float(data['lon'])
-                direccion = data.get('display_name', f"{sucursal}, {localidad}")
-                addr = data.get('address', {})
-                est_res = addr.get('state', '').upper()
-                loc_res = addr.get('city', addr.get('town', addr.get('municipality', localidad))).upper()
-                return lat, lng, direccion, est_res if est_res else estado, loc_res if loc_res else localidad
-        except: pass
-    return None, None, None, None, None
+def buscar_direccion_libre_express(query):
+    """Buscador en vivo para el Plan B (Internet)."""
+    headers = {'User-Agent': 'RutasQSR_Express/1.0'}
+    q_str = f"{query} Mexico" if "mexico" not in query.lower() else query
+    url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(q_str)}&format=json&limit=1"
+    try:
+        time.sleep(1)
+        res = requests.get(url, headers=headers, timeout=10).json()
+        if res:
+            return float(res[0]['lat']), float(res[0]['lon']), res[0].get('display_name', query)
+    except: pass
+    return None, None, None
 
 def obtener_ruta_vial_real(puntos_coordenadas):
     if len(puntos_coordenadas) < 2: return puntos_coordenadas
@@ -191,10 +187,11 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
         estados_disponibles = sorted([str(e) for e in df_full['estado'].dropna().unique() if str(e).strip() != ''])
         st.markdown("### 🏢 Opciones de Ruteo Inteligente")
         
-        tab_vrp, tab_radial, tab_custom = st.tabs([
-            "⚡ Circuitos Automáticos (VRP Global)", 
+        tab_vrp, tab_radial, tab_custom, tab_express = st.tabs([
+            "⚡ Circuitos Automáticos", 
             "🎯 Diseñador Radial", 
-            "🔧 Rutas Personalizables (Libres)"
+            "🔧 Rutas Personalizables",
+            "🚀 Ruteo Exprés (Buscador)"
         ])
         
         with tab_vrp:
@@ -208,10 +205,10 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 lat_c, lon_c, nombre_origen_final = 19.655381063145374, -99.19368263138871, "🏢 ECOLAB (Cuautitlán)"
             elif opcion_origen == "📍 Personalizado":
                 col_p1, col_p2 = st.columns(2)
-                with col_p1: nombre_origen_final = st.text_input("Nombre del Hotel / Origen:", value="Hotel Guanajuato")
-                with col_p2: coord_input = st.text_input("Pegar Latitud, Longitud (Ej: 21.0181, -101.2580):", value="")
+                with col_p1: nombre_origen_final = st.text_input("Nombre / Origen (Opcional):", value="Punto Base")
+                with col_p2: coord_input = st.text_input("Coordenadas Lat, Lon (Requerido):", value="")
                 if coord_input:
-                    try: lat_c, lon_c = map(float, coord_input.split(",")); st.success(f"✅ Satélite fijado: {lat_c}, {lon_c}")
+                    try: lat_c, lon_c = map(float, coord_input.split(",")); st.success(f"✅ Satélite fijado.")
                     except: st.error("⚠️ Formato inválido.")
             
             st.markdown("---")
@@ -288,8 +285,8 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 lat_c_rad, lon_c_rad, nombre_origen_rad_final = 19.655381063145374, -99.19368263138871, "🏢 ECOLAB (Cuautitlán)"
             elif opcion_origen_rad == "📍 Personalizado":
                 col_pr1, col_pr2 = st.columns(2)
-                with col_pr1: nombre_origen_rad_final = st.text_input("Nombre Hotel/Origen:", value="Hotel Gto", key="rad_nombre")
-                with col_pr2: coord_input_rad = st.text_input("Latitud, Longitud:", value="", key="rad_coord")
+                with col_pr1: nombre_origen_rad_final = st.text_input("Nombre / Origen (Opcional):", value="Punto Base", key="rad_nombre")
+                with col_pr2: coord_input_rad = st.text_input("Coordenadas Lat, Lon (Requerido):", value="", key="rad_coord")
                 if coord_input_rad:
                     try: lat_c_rad, lon_c_rad = map(float, coord_input_rad.split(",")); st.success(f"✅ Satélite fijado.")
                     except: pass
@@ -379,8 +376,8 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 lat_c_cust, lon_c_cust, nombre_origen_cust_final = 19.655381063145374, -99.19368263138871, "🏢 ECOLAB (Cuautitlán)"
             elif opcion_origen_custom == "📍 Personalizado":
                 col_cu_p1, col_cu_p2 = st.columns(2)
-                with col_cu_p1: nombre_origen_cust_final = st.text_input("Nombre Hotel/Origen:", value="Hotel Base", key="custom_nom_orig")
-                with col_cu_p2: coord_input_cust = st.text_input("Latitud, Longitud:", value="", key="custom_coord_orig")
+                with col_cu_p1: nombre_origen_cust_final = st.text_input("Nombre / Origen (Opcional):", value="Hotel Base", key="custom_nom_orig")
+                with col_cu_p2: coord_input_cust = st.text_input("Coordenadas Lat, Lon (Requerido):", value="", key="custom_coord_orig")
                 if coord_input_cust:
                     try: lat_c_cust, lon_c_cust = map(float, coord_input_cust.split(",")); st.success("✅ Satélite fijado.")
                     except: pass
@@ -410,7 +407,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     sugeridas_radio = [row.to_dict() for idx, row in df_all_sucursales_zona.iterrows() if row['sucursal_nombre'] != pivote_custom_nombre and calcular_distancia_haversine(lat_piv_c, lon_piv_c, float(row['latitud']), float(row['longitud'])) <= radio_km_cust]
                     
                     st.markdown("#### 🛠️ Editor y Selector Manual de Ruta")
-                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona senza restricciones.")
+                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona sin restricciones.")
                     
                     ids_sugeridos_defaults = [s['id_sucursal'] for s in optimizar_secuencia_por_proximidad(lat_c_cust, lon_c_cust, sugeridas_radio)[:objetivo_visitas_custom]]
                     
@@ -463,6 +460,136 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     
                     renderizar_mapa_seguro(mapa_cust, alto=450)
 
+        # ==========================================
+        # ⚡ MÓDULO EXPRÉS (BÚSQUEDA INTELIGENTE)
+        # ==========================================
+        with tab_express:
+            st.markdown("### 🔍 Buscador Inteligente & Ruteo Exprés")
+            st.info("Escribe directamente en la barra de búsqueda para filtrar todas las tiendas de tu Base de Datos. Selecciona las que necesites como etiquetas (tags) y genera una ruta ad-hoc al instante.")
+            
+            col_eh1, col_eh2 = st.columns(2)
+            with col_eh1:
+                hora_inicio_express = st.select_slider("Hora de Inicio:", options=["08:00", "08:30", "09:00", "09:30"], value="09:00", key="exp_hora")
+            
+            st.markdown("#### 📍 1. Configuración de Salida")
+            opcion_origen_exp = st.radio("Punto Partida:", ["🏠 CASA", "🏢 ECOLAB", "📍 Personalizado"], horizontal=True, key="exp_orig_opt")
+            lat_c_exp, lon_c_exp, nombre_origen_exp_final = 19.549965629588566, -99.23691334673492, "🏠 CASA"
+            if opcion_origen_exp == "🏢 ECOLAB":
+                lat_c_exp, lon_c_exp, nombre_origen_exp_final = 19.655381063145374, -99.19368263138871, "🏢 ECOLAB (Cuautitlán)"
+            elif opcion_origen_exp == "📍 Personalizado":
+                col_e_p1, col_e_p2 = st.columns(2)
+                with col_e_p1: nombre_origen_exp_final = st.text_input("Nombre / Origen (Opcional):", value="Punto Base", key="exp_nom_orig")
+                with col_e_p2: coord_input_exp = st.text_input("Coordenadas Lat, Lon (Requerido):", value="", key="exp_coord_orig")
+                if coord_input_exp:
+                    try: lat_c_exp, lon_c_exp = map(float, coord_input_exp.split(",")); st.success("✅ Satélite fijado.")
+                    except: pass
+
+            st.markdown("---")
+            st.markdown("#### 🎯 2. Buscador Inteligente (Base de Datos)")
+            
+            # PREPARAR LAS OPCIONES DEL BUSCADOR (MARCA - SUCURSAL - LOCALIDAD)
+            df_full['opcion_busqueda'] = "[" + df_full['cliente_marca'].astype(str) + "] " + df_full['sucursal_nombre'].astype(str) + " - " + df_full['zona_localidad'].astype(str)
+            opciones_db = df_full['opcion_busqueda'].tolist()
+            
+            seleccion_inteligente = st.multiselect(
+                "Escribe aquí (Marca, Sucursal o Localidad) y selecciona las tiendas para tu viaje:",
+                options=opciones_db,
+                default=[]
+            )
+
+            st.markdown("#### 🌐 Plan B: Búsqueda Libre en Internet (Emergencias)")
+            with st.expander("¿No encontraste la tienda arriba? Búscala en internet aquí ⬇️"):
+                col_search, col_btn = st.columns([3, 1])
+                with col_search:
+                    nueva_tienda_query = st.text_input("Ingresa la tienda y su ciudad (Ej: Little Caesars Parque Delta CDMX):", key="express_internet_input")
+                with col_btn:
+                    st.write("")
+                    st.write("")
+                    if st.button("➕ Rastrear en Internet"):
+                        if nueva_tienda_query:
+                            with st.spinner("Rastreando en Google Maps / OSM..."):
+                                lat_e, lon_e, dir_e = buscar_direccion_libre_express(nueva_tienda_query)
+                                if lat_e:
+                                    st.session_state.express_puntos_internet.append({
+                                        "id_sucursal": f"EXP-{len(st.session_state.express_puntos_internet)+1}",
+                                        "cliente_marca": "EXPRÉS",
+                                        "sucursal_nombre": nueva_tienda_query.upper(),
+                                        "latitud": lat_e,
+                                        "longitud": lon_e,
+                                        "direccion_completa": dir_e,
+                                        "visitas_realizadas": 0,
+                                        "fuente_origen": "🌐 Internet"
+                                    })
+                                    st.success(f"✅ Encontrado: {dir_e}")
+                                else:
+                                    st.error("❌ No se encontró. Intenta ser más específico agregando la ciudad.")
+                
+                if st.session_state.get('express_puntos_internet'):
+                    st.write("📍 **Agregadas temporalmente desde Internet:**")
+                    st.dataframe(pd.DataFrame(st.session_state.express_puntos_internet)[['sucursal_nombre', 'direccion_completa']], hide_index=True)
+                    if st.button("🗑️ Limpiar búsquedas de internet"):
+                        st.session_state.express_puntos_internet = []
+                        st.rerun()
+
+            st.markdown("---")
+            if st.button("🚀 Trazar Ruta Óptima", type="primary"):
+                # UNIR LO QUE ELIGIÓ DEL BUSCADOR + LO QUE BUSCÓ EN INTERNET
+                puntos_totales = []
+                
+                if seleccion_inteligente:
+                    df_seleccionados = df_full[df_full['opcion_busqueda'].isin(seleccion_inteligente)]
+                    for _, row in df_seleccionados.iterrows():
+                        puntos_totales.append({
+                            "id_sucursal": row['id_sucursal'],
+                            "cliente_marca": row['cliente_marca'],
+                            "sucursal_nombre": row['sucursal_nombre'],
+                            "latitud": float(row['latitud']),
+                            "longitud": float(row['longitud']),
+                            "direccion_completa": row['direccion_completa'],
+                            "visitas_realizadas": row.get('visitas_realizadas', 0),
+                            "fuente_origen": "🗄️ Base de Datos"
+                        })
+                
+                if st.session_state.get('express_puntos_internet'):
+                    puntos_totales.extend(st.session_state.express_puntos_internet)
+                
+                if len(puntos_totales) == 0:
+                    st.warning("⚠️ Debes seleccionar al menos una tienda en el buscador o rastrear una en internet.")
+                else:
+                    bloque_optimizado = optimizar_secuencia_por_proximidad(lat_c_exp, lon_c_exp, puntos_totales)
+                    visitas_calc_e, _, _ = simular_ruta_del_dia(bloque_optimizado, hora_inicio_express, len(bloque_optimizado), False, "Base", (lat_c_exp, lon_c_exp))
+                    
+                    if visitas_calc_e:
+                        st.session_state.express_simulada = True
+                        st.session_state.express_visitas_final = []
+                        st.session_state.express_coords_viaje = [(lat_c_exp, lon_c_exp)]
+                        st.session_state.express_puntos_mapa = [
+                            {"lat": lat_c_exp, "lon": lon_c_exp, "name": f"📍 ORIGEN ({nombre_origen_exp_final})", "idx": 0}
+                        ]
+                        
+                        for tiend_idx, v in enumerate(visitas_calc_e):
+                            orig = next(item for item in bloque_optimizado if str(item['id_sucursal']) == str(v.get('ID', v.get('ID Sucursal', ''))))
+                            hl, hs = v.get("ETA Llegada", ""), v.get("ETA Salida", v.get("Hora Salida", ""))
+                            st.session_state.express_visitas_final.append({
+                                "ID": orig['id_sucursal'], "Sec": tiend_idx+1, "Marca": orig['cliente_marca'], 
+                                "Sucursal": orig['sucursal_nombre'], "Llegada": hl, "Salida": hs, 
+                                "Dirección": orig['direccion_completa'], "Fuente": orig.get('fuente_origen', '')
+                            })
+                            st.session_state.express_puntos_mapa.append({"lat": float(orig['latitud']), "lon": float(orig['longitud']), "name": f"[{orig['cliente_marca']}] {orig['sucursal_nombre']}", "idx": tiend_idx+1})
+                            st.session_state.express_coords_viaje.append((float(orig['latitud']), float(orig['longitud'])))
+
+            if st.session_state.express_simulada:
+                st.write("---")
+                st.markdown("### 📋 Itinerario Óptimo Exprés")
+                st.markdown(renderizar_tabla_html(pd.DataFrame(st.session_state.express_visitas_final)), unsafe_allow_html=True)
+                
+                link_gmaps_exp = generar_link_google_maps(st.session_state.express_coords_viaje)
+                st.markdown(f'<a href="{link_gmaps_exp}" target="_blank"><button style="background-color:#1E88E5; color:white; padding:10px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; width:100%;">🗺️ Abrir Ruta Exprés en Google Maps</button></a>', unsafe_allow_html=True)
+                st.write("")
+                
+                mapa_exp = crear_mapa_base(st.session_state.express_puntos_mapa, obtener_ruta_vial_real(st.session_state.express_coords_viaje))
+                renderizar_mapa_seguro(mapa_exp, alto=450)
+
 # ==========================================
 # 🔒 MÓDULO DE INVENTARIO CON CONTRASEÑA
 # ==========================================
@@ -478,7 +605,7 @@ elif modulo_principal == "📋 Control de Inventario y Visitas":
             st.write("")
             st.write("")
             if st.button("🔑 Desbloquear Panel"):
-                # ---> AQUÍ ESTÁ TU CONTRASEÑA (Cámbiala si lo deseas) <---
+                # ---> AQUÍ ESTÁ TU CONTRASEÑA <---
                 if pwd_input == "QsrAdmin2024!":
                     st.session_state.auth_inventario = True
                     st.rerun()
@@ -493,7 +620,6 @@ elif modulo_principal == "📋 Control de Inventario y Visitas":
                 st.rerun()
         
         st.write("---")
-        # --- CONTENIDO ORIGINAL DESBLOQUEADO ---
         tab_vista, tab_edicion = st.tabs(["👁️ Vista General", "✏️ Editor Maestro de Base de Datos"])
         with tab_vista:
             with st.spinner("Consultando Google Sheets..."):
