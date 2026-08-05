@@ -113,7 +113,6 @@ def generar_link_google_maps(puntos_coords):
     return base_url + "/".join(segmentos)
 
 def buscar_direccion_libre_express(query):
-    """Buscador en vivo para el Plan B (Internet)."""
     headers = {'User-Agent': 'RutasQSR_Express/1.0'}
     q_str = f"{query} Mexico" if "mexico" not in query.lower() else query
     url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(q_str)}&format=json&limit=1"
@@ -162,6 +161,35 @@ def crear_mapa_base(puntos_marcadores, ruta_linea=None, color_linea="#002F6C"):
             
     if lats and lons: 
         m.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+        
+        # --- NUEVA FUNCIONALIDAD: ÁREA DE TRABAJO (CIRCUNFERENCIA) ---
+        if len(puntos_marcadores) > 1:
+            lats_paradas = [float(p['lat']) for p in puntos_marcadores]
+            lons_paradas = [float(p['lon']) for p in puntos_marcadores]
+            
+            # Centroide geográfico
+            centro_lat = sum(lats_paradas) / len(lats_paradas)
+            centro_lon = sum(lons_paradas) / len(lons_paradas)
+            
+            # Búsqueda del punto más lejano para determinar el radio
+            max_dist_km = 0
+            for lat, lon in zip(lats_paradas, lons_paradas):
+                dist = calcular_distancia_haversine(centro_lat, centro_lon, lat, lon)
+                if dist > max_dist_km:
+                    max_dist_km = dist
+            
+            # Dibujar el área operativa (circunferencia verde)
+            if max_dist_km > 0:
+                folium.Circle(
+                    location=[centro_lat, centro_lon],
+                    radius=max_dist_km * 1000 * 1.15, # 15% de margen extra visual
+                    color='#00C853',
+                    weight=2,
+                    fill=True,
+                    fillOpacity=0.08,
+                    tooltip=f"Área Operativa: ~{max_dist_km * 1.15:.1f} km de radio"
+                ).add_to(m)
+
     return m
 
 st.sidebar.header("☁️ Ecosistema Cloud Activo")
@@ -208,7 +236,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                 with col_p1: nombre_origen_final = st.text_input("Nombre / Origen (Opcional):", value="Punto Base")
                 with col_p2: coord_input = st.text_input("Coordenadas Lat, Lon (Requerido):", value="")
                 if coord_input:
-                    try: lat_c, lon_c = map(float, coord_input.split(",")); st.success(f"✅ Satélite fijado.")
+                    try: lat_c, lon_c = map(float, coord_input.split(",")); st.success(f"✅ Satélite fijado: {lat_c}, {lon_c}")
                     except: st.error("⚠️ Formato inválido.")
             
             st.markdown("---")
@@ -407,7 +435,7 @@ if modulo_principal == "🗺️ Planeación y Ruteo Inteligente":
                     sugeridas_radio = [row.to_dict() for idx, row in df_all_sucursales_zona.iterrows() if row['sucursal_nombre'] != pivote_custom_nombre and calcular_distancia_haversine(lat_piv_c, lon_piv_c, float(row['latitud']), float(row['longitud'])) <= radio_km_cust]
                     
                     st.markdown("#### 🛠️ Editor y Selector Manual de Ruta")
-                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona sin restricciones.")
+                    st.info("Puedes modificar la lista de abajo libremente: quita las que no quieras o agrega más sucursales de la zona senza restricciones.")
                     
                     ids_sugeridos_defaults = [s['id_sucursal'] for s in optimizar_secuencia_por_proximidad(lat_c_cust, lon_c_cust, sugeridas_radio)[:objetivo_visitas_custom]]
                     
